@@ -1,0 +1,3 @@
+@echo off
+echo Iniciando SmartHire AI na porta 8000...
+docker run --rm -p 8000:8000 smarthire-ai:dev

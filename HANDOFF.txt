@@ -1,0 +1,113 @@
+SmartHire — Handoff (resumo do que foi feito e como continuar)
+
+1) Estrutura do projeto
+- web/ (Next.js 15 + TS, App Router)
+- services/ai/ (FastAPI + Uvicorn, stub de /v1/transcribe e /v1/runs/:id)
+- docs/ (DECISOES.md, API_BFF.md, API_IA.md, SCHEMA.md, JOBS.md, SUPABASE_SETUP.md)
+- db/migrations/ (0001_schema.sql, 0002_seed_dev.sql, 0003_stages.sql)
+
+2) Decisões principais
+- Front/BFF: Next.js + Supabase (Auth/DB/Storage)
+- IA: FastAPI em serviço separado (ASR, RAG, scoring — stub inicial)
+- Filas (planejado): SQS + DLQ
+- Busca vetorial (planejado): pgvector no Supabase
+
+3) Rotas já implementadas (BFF)
+- Vagas
+  - POST /api/jobs (cria vaga; preenche company_id automaticamente com empresa padrão "Dev Co" usando service role)
+  - GET  /api/jobs
+- Etapas do processo
+  - GET/POST   /api/jobs/[id]/stages
+  - PUT/DELETE /api/stages/[stageId]
+  - GET/POST   /api/stages/[stageId]/requirements
+  - PUT/DELETE /api/requirements/[id]
+- Upload (Supabase Storage)
+  - POST /api/uploads/audio (URL assinada)
+- IA (proxy)
+  - POST /api/ai/transcribe
+  - GET  /api/ai/runs/:id
+- Setup buckets
+  - POST /api/setup/buckets (cria audios, resumes, transcripts, exports)
+- Auth/Provisionamento
+  - GET/POST via página /login (login por senha/link mágico)
+  - POST /api/auth/provision (vincula usuário à tabela users com role=admin na empresa padrão)
+
+4) Páginas já implementadas
+- / (Next padrão)
+- /login (login + botão "Provisionar usuário")
+- /ai-test (upload opcional + transcribe + polling)
+- /jobs (lista/cria/exclui vaga; botão "Etapas")
+- /jobs/[id]/stages (CRUD de etapas + requisitos por etapa)
+
+5) Variáveis de ambiente (web/.env.local)
+NEXT_PUBLIC_SUPABASE_URL= (Project URL do Supabase)
+NEXT_PUBLIC_SUPABASE_ANON_KEY= (anon key)
+SUPABASE_URL= (Project URL)
+SUPABASE_SERVICE_ROLE_KEY= (service_role — usar somente no servidor)
+NEXT_PUBLIC_AI_BASE_URL=http://localhost:8000   (ou URL do serviço de IA)
+
+6) Banco de dados (Supabase)
+- Executar migrações (na ordem) no SQL Editor do projeto que está nas variáveis:
+  - db/migrations/0001_schema.sql
+  - db/migrations/0003_stages.sql
+  - (opcional) db/migrations/0002_seed_dev.sql
+- Buckets de Storage
+  - POST http://localhost:3001/api/setup/buckets (em dev) ou criar manualmente (audios, resumes, transcripts, exports)
+
+7) Como rodar
+- IA (Docker):
+  docker build -t smarthire-ai:dev services/ai
+  docker run --rm -p 8000:8000 smarthire-ai:dev
+- IA (local):
+  cd services/ai && ./uvicorn.sh
+- Web:
+  cd web && npm install
+  npm run dev   (3000 ou 3001 se 3000 ocupado)
+
+8) Testes rápidos
+- IA direto:
+  curl -sS -H "Content-Type: application/json" --data-raw audio_path:audios/demo.wav http://localhost:8000/v1/transcribe
+  curl -sS http://localhost:8000/v1/runs/demo-run
+- IA via proxy (Next):
+  curl -sS -H "Content-Type: application/json" --data-raw audio_path:audios/demo.wav http://localhost:3001/api/ai/transcribe
+  curl -sS http://localhost:3001/api/ai/runs/demo-run
+- Upload assinado (se SUPABASE_URL e SERVICE_ROLE configurados):
+  curl -sS -H "Content-Type: application/json" --data-raw filename:demo.wav http://localhost:3001/api/uploads/audio
+
+9) Fluxo esperado (recrutador)
+- /login → autenticar e "Provisionar usuário"
+- /jobs → criar vaga (usa empresa padrão "Dev Co" no dev)
+- /jobs/<id>/stages → cadastrar etapas e requisitos
+- (Futuro) anexar artefatos por etapa e acionar score da IA
+
+10) Problemas comuns e soluções
+- "Supabase público não configurado" → faltam NEXT_PUBLIC_SUPABASE_URL/ANON_KEY; ajustar e reiniciar dev.
+- "SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY não configurados no servidor" → faltam envs de servidor; ajustar .env.local e reiniciar.
+- "Invalid supabaseUrl" → SUPABASE_URL precisa começar com https:// (Project URL exata).
+- Rotas dinâmicas (Next 15) → handlers devem aguardar params: { params }: { params: Promise<{ id: string }> } e usar const { id } = await params.
+- Porta 8000 ocupada → sudo fuser -k 8000/tcp ou rode Docker com -p 8001:8000.
+- Front rodando em 3001 → Next escolhe 3001 se 3000 estiver ocupado (mensagem no terminal).
+
+11) Git/GitHub
+- Remoto configurado para usar alias SSH: git@github.com-gusy66:Gusy66/smarthire.git
+- Chave SSH dedicada: ~/.ssh/id_ed25519_gusy66 (já configurada no ssh-agent e em ~/.ssh/config)
+- Push:
+  cd /home/gustavopimentel/Documentos/smarthire && git push -u origin main
+- .gitignore foi adicionado; venv/build removidos do versionamento.
+
+12) Próximos passos sugeridos
+- Integrar scoring por etapa (RAG + LLM) no serviço de IA; expor /v1/score_stage.
+- BFF: POST /api/stages/:stageId/score → dispara IA; GET status; grava stage_ai_runs/stage_scores; aplica threshold e avança application_stages.
+- RBAC/RLS: completar políticas por company_id e roles (admin, recruiter, interviewer) no Supabase.
+- Candidatos e applications (CRUD + vinculação à vaga), calendário básico e upload de currículo/áudio reais.
+- Observabilidade e rate limiting; custos por chamada IA.
+
+13) Links úteis (docs do repositório)
+- docs/DECISOES.md — Decisões de plataforma/arquitetura
+- docs/API_BFF.md — Contratos de API do BFF
+- docs/API_IA.md — Contratos de API do serviço de IA
+- docs/SCHEMA.md — Esquema de dados e diretrizes RLS (alto nível)
+- docs/JOBS.md — Filas e processamento assíncrono (planejado)
+- docs/SUPABASE_SETUP.md — Passos para configurar Supabase e variáveis
+
+Qualquer dúvida, siga este handoff e as migrações. Iniciando em outra máquina: configure .env.local, rode migrações, crie buckets, suba IA e web, e valide em /jobs e /jobs/<id>/stages.
