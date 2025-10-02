@@ -1,11 +1,86 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useToast } from '@/components/ToastProvider'
 
-type Stage = { id: string; name: string; order_index: number; threshold: number; stage_weight: number }
+type Stage = { id: string; name: string; description: string | null; order_index: number; threshold: number; stage_weight: number }
 type Requirement = { id: string; label: string; weight: number; description?: string }
 type Candidate = { id: string; name: string; email?: string }
+type PromptTemplate = { id: string; name: string; is_default: boolean }
+type StageAnalysisResult = {
+  run_id: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed'
+  result?: {
+    score?: number
+    analysis?: string
+    matched_requirements?: string[]
+    missing_requirements?: string[]
+    strengths?: string[]
+    weaknesses?: string[]
+    recommendations?: string[]
+  }
+  application_stage_id?: string
+  stage_id?: string | null
+  application_id?: string | null
+  created_at?: string
+}
+
+function StagePromptSelector({
+  stageId,
+  templates,
+  selected,
+  loading,
+  onChange,
+}: {
+  stageId: string
+  templates: PromptTemplate[]
+  selected: string | null
+  loading: boolean
+  onChange: (stageId: string, templateId: string | null) => Promise<void>
+}) {
+  const defaultTemplate = templates.find((t) => t.is_default) || null
+
+  return (
+    <div className="border-t pt-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h4 className="font-medium">Prompt desta etapa</h4>
+          <p className="text-sm text-gray-600">
+            Escolha o template que instruirá a IA para analisar currículos nesta etapa.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={selected ?? ''}
+            onChange={(e) => onChange(stageId, e.target.value || null)}
+            className="border rounded px-3 py-2 min-w-[220px]"
+            disabled={loading}
+          >
+            <option value="">
+              {defaultTemplate ? `Usar padrão (${defaultTemplate.name})` : 'Selecione um template'}
+            </option>
+            {templates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+                {template.is_default ? ' (padrão)' : ''}
+              </option>
+            ))}
+          </select>
+          <a href="/settings/prompts" className="text-sm text-blue-600 underline">
+            Gerenciar templates
+          </a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+async function fetchPromptTemplates(): Promise<PromptTemplate[]> {
+  const res = await fetch('/api/prompt-templates')
+  const json = await res.json()
+  if (!res.ok) throw new Error(json?.error?.message || 'Erro ao carregar templates')
+  return json.items || []
+}
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init)
@@ -20,9 +95,9 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [stages, setStages] = useState<Stage[]>([])
   const [reqs, setReqs] = useState<Record<string, Requirement[]>>({})
   const [creating, setCreating] = useState(false)
-  const [stageForm, setStageForm] = useState({ name: '', threshold: 0, stage_weight: 1 })
+  const [stageForm, setStageForm] = useState({ name: '', description: '', threshold: 0, stage_weight: 1 })
   const [editingStageId, setEditingStageId] = useState<string | null>(null)
-  const [editingStageForm, setEditingStageForm] = useState<{ name: string; threshold: number; stage_weight: number }>({ name: '', threshold: 0, stage_weight: 1 })
+  const [editingStageForm, setEditingStageForm] = useState<{ name: string; description: string; threshold: number; stage_weight: number }>({ name: '', description: '', threshold: 0, stage_weight: 1 })
 
   // Candidates assigned to the job (simplificado: todos candidatos do tenant)
   const [candidates, setCandidates] = useState<Candidate[]>([])
@@ -31,6 +106,12 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   
   // Candidato selecionado para cada etapa
   const [stageSelectedCandidates, setStageSelectedCandidates] = useState<Record<string, string | null>>({})
+  const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([])
+  const [stagePromptMap, setStagePromptMap] = useState<Record<string, string | null>>({})
+  const [promptLoadingStage, setPromptLoadingStage] = useState<string | null>(null)
+  const [analysisByStage, setAnalysisByStage] = useState<Record<string, StageAnalysisResult | null>>({})
+  const [analysisLoading, setAnalysisLoading] = useState<Record<string, boolean>>({})
+  const [analysisExpanded, setAnalysisExpanded] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     ;(async () => {
@@ -38,11 +119,32 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       setJobId(id)
       const { items } = await api<{ items: Stage[] }>(`/api/jobs/${id}/stages`)
       setStages(items)
+      setAnalysisByStage((prev) => {
+        const next: Record<string, StageAnalysisResult | null> = {}
+        items.forEach((stage) => { next[stage.id] = prev[stage.id] ?? null })
+        return next
+      })
+      setAnalysisLoading((prev) => {
+        const next: Record<string, boolean> = {}
+        items.forEach((stage) => { next[stage.id] = prev[stage.id] ?? false })
+        return next
+      })
+      setAnalysisExpanded((prev) => {
+        const next: Record<string, boolean> = {}
+        items.forEach((stage) => { next[stage.id] = prev[stage.id] ?? false })
+        return next
+      })
       // carregar candidatos (MVP: todos)
       const cand = await fetch('/api/candidates').then((r) => r.json()).catch(() => ({ items: [] }))
       setCandidates(cand.items || [])
       const apps = await fetch(`/api/jobs/${id}/applications`).then((r) => r.json()).catch(() => ({ items: [] }))
       setApplications(apps.items || [])
+      try {
+        const pts = await fetchPromptTemplates()
+        setPromptTemplates(pts)
+      } catch (error: any) {
+        notify({ title: 'Erro ao carregar templates', description: error?.message, variant: 'error' })
+      }
     })()
   }, [params])
 
@@ -54,9 +156,43 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   useEffect(() => {
     stages.forEach((s) => {
       if (!reqs[s.id]) loadRequirements(s.id)
+      if (!stagePromptMap.hasOwnProperty(s.id)) loadPromptForStage(s.id)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stages])
+
+  async function loadPromptForStage(stageId: string) {
+    setPromptLoadingStage(stageId)
+    try {
+      const res = await fetch(`/api/stages/${stageId}/prompt-template`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error?.message || 'Erro ao buscar template da etapa')
+      setStagePromptMap((prev) => ({ ...prev, [stageId]: json.item?.prompt_template_id ?? null }))
+    } catch (error: any) {
+      notify({ title: 'Erro ao carregar template da etapa', description: error?.message, variant: 'error' })
+    } finally {
+      setPromptLoadingStage(null)
+    }
+  }
+
+  async function handleStagePromptChange(stageId: string, templateId: string | null) {
+    setPromptLoadingStage(stageId)
+    try {
+      const res = await fetch(`/api/stages/${stageId}/prompt-template`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt_template_id: templateId }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error?.message || 'Erro ao definir template da etapa')
+      setStagePromptMap((prev) => ({ ...prev, [stageId]: templateId }))
+      notify({ title: 'Template da etapa atualizado', variant: 'success' })
+    } catch (error: any) {
+      notify({ title: 'Erro ao salvar template', description: error?.message, variant: 'error' })
+    } finally {
+      setPromptLoadingStage(null)
+    }
+  }
 
   async function createStage(e: React.FormEvent) {
     e.preventDefault()
@@ -70,7 +206,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       })
       const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`)
       setStages(items)
-      setStageForm({ name: '', threshold: 0, stage_weight: 1 })
+      setStageForm({ name: '', description: '', threshold: 0, stage_weight: 1 })
       notify({ title: 'Etapa criada', variant: 'success' })
     } finally {
       setCreating(false)
@@ -85,11 +221,50 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   }, [applications, selectedCandidateId])
 
   // Função para obter application_id de um candidato específico
-  const getApplicationId = (candidateId: string | null) => {
+  const getApplicationId = useCallback((candidateId: string | null) => {
     if (!candidateId) return null
     const app = applications.find((a) => a.candidate_id === candidateId)
     return app?.id || null
-  }
+  }, [applications])
+
+  const loadAnalysisForStage = useCallback(async (stageId: string, candidateId: string | null) => {
+    if (!candidateId) {
+      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
+      return
+    }
+    const applicationId = getApplicationId(candidateId)
+    if (!applicationId) {
+      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
+      return
+    }
+    setAnalysisLoading((prev) => ({ ...prev, [stageId]: true }))
+    try {
+      const res = await fetch(`/api/stages/${stageId}/analysis?application_id=${encodeURIComponent(applicationId)}`)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error?.message || 'Erro ao buscar análise da IA')
+      }
+      const json = await res.json()
+      setAnalysisByStage((prev) => ({ ...prev, [stageId]: json.item || null }))
+    } catch (error: any) {
+      console.error('Erro ao carregar análise da etapa', error)
+      notify({ title: 'Erro ao carregar análise', description: error?.message || 'Não foi possível carregar o relatório da IA.', variant: 'error' })
+      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
+    } finally {
+      setAnalysisLoading((prev) => ({ ...prev, [stageId]: false }))
+    }
+  }, [getApplicationId, notify])
+
+  const handleStageCandidateSelection = useCallback((stageId: string, candidateId: string | null) => {
+    setStageSelectedCandidates((prev) => ({ ...prev, [stageId]: candidateId }))
+    if (!candidateId) {
+      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
+      setAnalysisExpanded((prev) => ({ ...prev, [stageId]: false }))
+      return
+    }
+    setAnalysisExpanded((prev) => ({ ...prev, [stageId]: prev[stageId] ?? true }))
+    loadAnalysisForStage(stageId, candidateId)
+  }, [loadAnalysisForStage])
 
   async function assignCandidate() {
     if (!jobId || !selectedCandidateId) return
@@ -116,6 +291,13 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
             placeholder="Nome da etapa"
             className="border rounded px-3 py-2"
             required
+          />
+          <textarea
+            value={stageForm.description}
+            onChange={(e) => setStageForm((f) => ({ ...f, description: e.target.value }))}
+            placeholder="Descrição detalhada da etapa"
+            className="border rounded px-3 py-2"
+            rows={3}
           />
           <div className="grid grid-cols-2 gap-3">
             <input
@@ -181,14 +363,39 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
             <div className="flex items-center justify-between">
               <div className="flex-1 pr-4">
                 {editingStageId === s.id ? (
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <input value={editingStageForm.name} onChange={(e)=>setEditingStageForm((f)=>({ ...f, name: e.target.value }))} className="border rounded px-2 py-1" />
-                    <input type="number" step="0.01" value={editingStageForm.threshold} onChange={(e)=>setEditingStageForm((f)=>({ ...f, threshold: Number(e.target.value) }))} className="border rounded px-2 py-1" />
-                    <input type="number" step="0.01" value={editingStageForm.stage_weight} onChange={(e)=>setEditingStageForm((f)=>({ ...f, stage_weight: Number(e.target.value) }))} className="border rounded px-2 py-1" />
+                  <div className="grid gap-2">
+                    <input
+                      value={editingStageForm.name}
+                      onChange={(e) => setEditingStageForm((f) => ({ ...f, name: e.target.value }))}
+                      className="border rounded px-2 py-1"
+                    />
+                    <textarea
+                      value={editingStageForm.description}
+                      onChange={(e) => setEditingStageForm((f) => ({ ...f, description: e.target.value }))}
+                      className="border rounded px-2 py-1"
+                      rows={3}
+                    />
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editingStageForm.threshold}
+                        onChange={(e) => setEditingStageForm((f) => ({ ...f, threshold: Number(e.target.value) }))}
+                        className="border rounded px-2 py-1"
+                      />
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editingStageForm.stage_weight}
+                        onChange={(e) => setEditingStageForm((f) => ({ ...f, stage_weight: Number(e.target.value) }))}
+                        className="border rounded px-2 py-1"
+                      />
+                    </div>
                   </div>
                 ) : (
                   <>
                     <div className="font-medium">{s.name}</div>
+                    {s.description && <p className="text-sm text-gray-600 whitespace-pre-wrap">{s.description}</p>}
                     <div className="text-sm text-gray-600">Threshold: {s.threshold} • Peso: {s.stage_weight}</div>
                   </>
                 )}
@@ -196,20 +403,28 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
               {editingStageId === s.id ? (
                 <div className="flex gap-2">
                   <button className="bg-black text-white rounded px-3 py-1" onClick={async()=>{
-                    await fetch(`/api/stages/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingStageForm) })
+        await fetch(`/api/stages/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingStageForm) })
                     const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`)
-                    setStages(items); setEditingStageId(null)
+        setStages(items); setEditingStageId(null)
                     notify({ title: 'Etapa atualizada', variant: 'success' })
                   }}>Salvar</button>
                   <button className="border rounded px-3 py-1" onClick={()=>setEditingStageId(null)}>Cancelar</button>
                 </div>
               ) : (
                 <div className="flex gap-2">
-                  <button className="text-blue-600 underline" onClick={()=>{ setEditingStageId(s.id); setEditingStageForm({ name: s.name, threshold: s.threshold, stage_weight: s.stage_weight }) }}>Editar</button>
+                  <button className="text-blue-600 underline" onClick={()=>{ setEditingStageId(s.id); setEditingStageForm({ name: s.name, description: s.description || '', threshold: s.threshold, stage_weight: s.stage_weight }) }}>Editar</button>
                   <button className="text-red-600 underline" onClick={async()=>{ if(!confirm('Remover etapa?')) return; await fetch(`/api/stages/${s.id}`, { method: 'DELETE' }); const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`); setStages(items); notify({ title: 'Etapa removida', variant: 'success' }) }}>Remover</button>
                 </div>
               )}
             </div>
+
+            <StagePromptSelector
+              stageId={s.id}
+              templates={promptTemplates}
+              selected={stagePromptMap[s.id] ?? null}
+              loading={promptLoadingStage === s.id}
+              onChange={handleStagePromptChange}
+            />
             
             {/* Seletor de candidato para esta etapa específica */}
             <div className="border-t pt-3">
@@ -218,7 +433,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                 <select
                   className="border rounded px-3 py-2 flex-1"
                   value={stageSelectedCandidates[s.id] ?? ''}
-                  onChange={(e) => setStageSelectedCandidates(prev => ({ ...prev, [s.id]: e.target.value || null }))}
+                  onChange={(e) => handleStageCandidateSelection(s.id, e.target.value || null)}
                 >
                   <option value="">Selecione um candidato</option>
                   {applications.map((app) => {
@@ -243,8 +458,25 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                 stageId={s.id} 
                 applicationId={getApplicationId(stageSelectedCandidates[s.id])}
                 candidateName={candidates.find(c => c.id === stageSelectedCandidates[s.id])?.name}
+                onRunFinished={(stageId, runId, applicationStageId) => {
+                  const currentCandidate = stageSelectedCandidates[stageId] ?? null
+                  if (currentCandidate) {
+                    loadAnalysisForStage(stageId, currentCandidate)
+                    setAnalysisExpanded((prev) => ({ ...prev, [stageId]: true }))
+                  }
+                }}
               />
             </div>
+            <StageAnalysisPanel
+              stageId={s.id}
+              candidateId={stageSelectedCandidates[s.id] ?? null}
+              candidateName={candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null}
+              analysis={analysisByStage[s.id] || null}
+              loading={Boolean(analysisLoading[s.id])}
+              expanded={analysisExpanded[s.id] ?? false}
+              onToggle={() => setAnalysisExpanded((prev) => ({ ...prev, [s.id]: !(prev[s.id] ?? false) }))}
+              onRefresh={() => loadAnalysisForStage(s.id, stageSelectedCandidates[s.id] ?? null)}
+            />
             <div className="pt-2">
               <h3 className="font-medium mb-2">Requisitos</h3>
               <RequirementsCrud
@@ -265,7 +497,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   )
 }
 
-function UploadAndEvaluate({ stageId, applicationId, candidateName }: { stageId: string; applicationId: string | null; candidateName?: string }) {
+function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinished }: { stageId: string; applicationId: string | null; candidateName?: string; onRunFinished?: (stageId: string, runId: string, applicationStageId: string) => void }) {
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const [transcriptFile, setTranscriptFile] = useState<File | null>(null)
@@ -362,7 +594,16 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName }: { stageId:
         {submitting ? 'Enviando...' : 'Enviar para IA (transcrever e avaliar)'}
       </button>
       {runId && appStageIdForPoller && (
-        <RunPoller runId={runId} stageId={stageId} applicationStageId={appStageIdForPoller} onFinished={() => { /* noop, painel recarrega fora */ }} />
+        <RunPoller
+          runId={runId}
+          stageId={stageId}
+          applicationStageId={appStageIdForPoller}
+          onFinished={(completedRunId) => {
+            if (onRunFinished) {
+              onRunFinished(stageId, completedRunId, appStageIdForPoller)
+            }
+          }}
+        />
       )}
     </div>
   )
@@ -429,7 +670,7 @@ function RequirementsCrud({ stageId, requirements, onChanged }: { stageId: strin
   )
 }
 
-function RunPoller({ runId, stageId, applicationStageId, onFinished }: { runId: string; stageId: string; applicationStageId: string; onFinished: () => void }) {
+function RunPoller({ runId, stageId, applicationStageId, onFinished }: { runId: string; stageId: string; applicationStageId: string; onFinished: (runId: string) => void }) {
   const [status, setStatus] = useState<'pending'|'running'|'succeeded'|'failed'>('running')
   useEffect(() => {
     let timer: any
@@ -440,10 +681,11 @@ function RunPoller({ runId, stageId, applicationStageId, onFinished }: { runId: 
         if (j.status === 'succeeded') {
           setStatus('succeeded')
           await fetch(`/api/stages/${stageId}/scores/auto`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ application_stage_id: applicationStageId }),
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ application_stage_id: applicationStageId, run_id: runId }),
           })
-          onFinished()
+          onFinished(runId)
           return
         }
         if (j.status === 'failed') { setStatus('failed'); return }

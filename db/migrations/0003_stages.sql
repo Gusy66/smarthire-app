@@ -4,6 +4,7 @@ create table if not exists job_stages (
   id uuid primary key default gen_random_uuid(),
   job_id uuid not null references jobs(id) on delete cascade,
   name text not null,
+  description text,
   order_index int not null default 0,
   threshold numeric(5,2) not null default 0.0, -- pontuação mínima para aprovar
   created_at timestamptz not null default now()
@@ -37,13 +38,16 @@ create table if not exists application_stages (
 create table if not exists stage_ai_runs (
   id uuid primary key default gen_random_uuid(),
   application_stage_id uuid not null references application_stages(id) on delete cascade,
-  type text check (type in ('rag','score')) not null,
+  run_id text not null,
+  type text check (type in ('evaluate','rag','score')) not null,
   status text check (status in ('pending','running','succeeded','failed')) not null,
   cost numeric(12,4),
   tokens int,
   started_at timestamptz default now(),
   finished_at timestamptz,
-  error text
+  error text,
+  result jsonb,
+  unique(application_stage_id, run_id)
 );
 
 -- Pontuações por requisito

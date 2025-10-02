@@ -13,6 +13,7 @@ export default function NavBar() {
           <a href="/jobs" className="nav-link">Vagas</a>
           <a href="/candidates" className="nav-link">Candidatos</a>
           <a href="/settings" className="nav-link">Configurações</a>
+          <a href="/settings/prompts" className="nav-link">Templates</a>
           <AuthStatus />
         </div>
       </nav>

@@ -58,13 +58,13 @@ export default function AISettingsPage() {
         throw new Error(err.error?.message || 'Erro ao salvar configurações')
       }
       
-      notify.notify({ 
+      notify({ 
         title: 'Configurações salvas', 
         description: 'Configurações da IA foram atualizadas com sucesso',
         variant: 'success' 
       })
     } catch (error) {
-      notify.notify({ 
+      notify({ 
         title: 'Erro ao salvar', 
         description: error instanceof Error ? error.message : 'Erro desconhecido',
         variant: 'error' 
@@ -91,13 +91,13 @@ export default function AISettingsPage() {
         throw new Error(err.error?.message || 'Erro ao testar conexão')
       }
       
-      notify.notify({ 
+      notify({ 
         title: 'Conexão testada', 
         description: 'Conexão com OpenAI estabelecida com sucesso',
         variant: 'success' 
       })
     } catch (error) {
-      notify.notify({ 
+      notify({ 
         title: 'Erro na conexão', 
         description: error instanceof Error ? error.message : 'Erro desconhecido',
         variant: 'error' 

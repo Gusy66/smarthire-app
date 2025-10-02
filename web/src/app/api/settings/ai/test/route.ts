@@ -1,15 +1,11 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../../../_lib/supabaseAdmin'
-import { getUserIdFromCookie } from '../../../_lib/auth'
+import { requireUser } from '../../../_lib/auth'
 
 export async function POST(req: NextRequest) {
   try {
     const supabase = getSupabaseAdmin()
-    const userId = await getUserIdFromCookie()
-    
-    if (!userId) {
-      return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
-    }
+    await requireUser()
 
     const body = await req.json()
     const { openai_api_key, model } = body

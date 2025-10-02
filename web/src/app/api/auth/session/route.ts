@@ -3,8 +3,10 @@ import { cookies } from 'next/headers'
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies()
+  let payload: any = {}
   try {
-    const { event, session } = await req.json()
+    payload = await req.json()
+    const { event, session } = payload
 
     if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
       const accessToken = session?.access_token
@@ -24,9 +26,14 @@ export async function POST(req: NextRequest) {
       cookieStore.delete('sb-access-token')
     }
 
-    return Response.json({ ok: true })
+    // Propaga a expiração para o navegador: evita loading infinito em alguns ambientes
+    const response = Response.json({ ok: true })
+    if (payload?.session?.expires_at) {
+      response.headers.set('X-Session-Expires-At', String(payload.session.expires_at))
+    }
+    return response
   } catch (error) {
-    console.error('Erro ao sincronizar sessão', error)
+    console.error('Erro ao sincronizar sessão', error, 'payload:', payload)
     return Response.json({ error: { code: 'internal_error', message: 'Falha ao sincronizar sessão' } }, { status: 500 })
   }
 }

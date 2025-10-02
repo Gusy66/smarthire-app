@@ -6,7 +6,7 @@ type Params = { params: Promise<{ stageId: string }> }
 export async function POST(req: NextRequest, { params }: Params) {
   const { stageId } = await params
   const body = await req.json()
-  const { application_stage_id } = body || {}
+  const { application_stage_id, run_id } = body || {}
   if (!application_stage_id) {
     return Response.json({ error: { code: 'validation_error', message: 'application_stage_id é obrigatório' } }, { status: 400 })
   }
@@ -15,15 +15,20 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Busca o run da IA para obter os resultados
   const { data: aiRun, error: runErr } = await supabase
     .from('stage_ai_runs')
-    .select('run_id, status')
+    .select('run_id, status, result')
     .eq('application_stage_id', application_stage_id)
     .eq('type', 'evaluate')
+    .eq('stage_id', stageId)
     .order('created_at', { ascending: false })
     .limit(1)
     .single()
 
   if (runErr || !aiRun?.run_id) {
     return Response.json({ error: { code: 'no_ai_run', message: 'Nenhum run de IA encontrado' } }, { status: 400 })
+  }
+
+  if (run_id && aiRun.run_id !== run_id) {
+    return Response.json({ error: { code: 'run_mismatch', message: 'Run informado difere do run mais recente' } }, { status: 409 })
   }
 
   // Busca resultado da IA
@@ -36,6 +41,13 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (aiResult.status !== 'succeeded' || !aiResult.result) {
     return Response.json({ error: { code: 'ai_not_ready', message: 'IA ainda não finalizou ou falhou' } }, { status: 400 })
   }
+
+  // Persiste resultado completo na tabela stage_ai_runs
+  await supabase
+    .from('stage_ai_runs')
+    .update({ result: aiResult.result })
+    .eq('application_stage_id', application_stage_id)
+    .eq('run_id', aiRun.run_id)
 
   // Busca requisitos da etapa
   const { data: reqs, error: reqErr } = await supabase

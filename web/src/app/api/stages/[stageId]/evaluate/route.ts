@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../../../_lib/supabaseAdmin'
+import { requireUser } from '../../../_lib/auth'
 
 type Params = { params: Promise<{ stageId: string }> }
 
@@ -11,9 +12,14 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!application_id) return Response.json({ error: { code: 'validation_error', message: 'application_id é obrigatório' } }, { status: 400 })
 
   const supabase = getSupabaseAdmin()
+  const user = await requireUser()
   
   // Garante application_stage
-  const { data: stage } = await supabase.from('job_stages').select('id').eq('id', stageId).single()
+  const { data: stage } = await supabase
+    .from('job_stages')
+    .select('id, name, threshold, stage_weight, jobs(description)')
+    .eq('id', stageId)
+    .single()
   const { data: appStageExisting } = await supabase
     .from('application_stages')
     .select('id, status')
@@ -28,17 +34,56 @@ export async function POST(req: NextRequest, { params }: Params) {
         .select('id')
         .single()).data!.id
 
+  // Carrega requisitos da etapa
+  const { data: requirements } = await supabase
+    .from('stage_requirements')
+    .select('label, description, weight')
+    .eq('stage_id', stageId)
+    .order('created_at', { ascending: true })
+
+  // Descobre template vinculado ou padrão do usuário
+  const { data: stageTemplate } = await supabase
+    .from('stage_prompt_templates')
+    .select('prompt_templates(content)')
+    .eq('stage_id', stageId)
+    .maybeSingle()
+
+  let promptTemplateContent: string | null = stageTemplate?.prompt_templates?.content ?? null
+
+  if (!promptTemplateContent) {
+    const { data: defaultTemplate } = await supabase
+      .from('prompt_templates')
+      .select('content')
+      .eq('user_id', user.id)
+      .eq('is_default', true)
+      .maybeSingle()
+
+    promptTemplateContent = defaultTemplate?.content ?? null
+  }
+
+  const payload = {
+    stage_id: stageId,
+    application_id,
+    resume_path,
+    audio_path,
+    transcript_path,
+    user_id: user.id,
+    stage: {
+      id: stage?.id,
+      name: stage?.name,
+      threshold: stage?.threshold,
+      stage_weight: stage?.stage_weight,
+      job_description: stage?.jobs?.description ?? null,
+    },
+    requirements: requirements ?? [],
+    prompt_template: promptTemplateContent,
+  }
+
   // Dispara avaliação completa na IA
   const aiRes = await fetch(`${process.env.NEXT_PUBLIC_AI_BASE_URL || 'http://localhost:8000'}/v1/evaluate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ 
-      stage_id: stageId,
-      application_id, 
-      resume_path, 
-      audio_path, 
-      transcript_path 
-    }),
+    body: JSON.stringify(payload),
   })
   
   if (!aiRes.ok) {

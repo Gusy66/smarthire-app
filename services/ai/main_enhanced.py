@@ -17,6 +17,18 @@ class TranscribeRequest(BaseModel):
     audio_path: str
     language: str | None = None
 
+class StagePayload(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    threshold: float | None = None
+    stage_weight: float | None = None
+    job_description: str | None = None
+
+class RequirementPayload(BaseModel):
+    label: str | None = None
+    description: str | None = None
+    weight: float | None = None
+
 class EvaluateRequest(BaseModel):
     stage_id: str
     application_id: str
@@ -24,6 +36,9 @@ class EvaluateRequest(BaseModel):
     audio_path: str | None = None
     transcript_path: str | None = None
     user_id: str | None = None
+    stage: StagePayload | None = None
+    requirements: list[RequirementPayload] | None = None
+    prompt_template: str | None = None
 
 class RunStatus(BaseModel):
     id: str
@@ -71,7 +86,8 @@ async def analyze_candidate_with_openai(
     text_content: str, 
     stage_description: str, 
     requirements: list[dict],
-    config: AIConfig
+    config: AIConfig,
+    prompt_template: str | None = None
 ) -> EvaluationResult:
     """
     Análise real do candidato usando OpenAI
@@ -84,32 +100,27 @@ async def analyze_candidate_with_openai(
                 for req in requirements
             ])
             
-            prompt = f"""
-            Analise o candidato para a vaga baseado nas informações fornecidas.
+            base_prompt = prompt_template or """
+Analise o candidato para a vaga baseado nas informações fornecidas.
 
-            DESCRIÇÃO DA ETAPA:
-            {stage_description}
+DESCRIÇÃO DA ETAPA:
+{{STAGE_DESCRIPTION}}
 
-            REQUISITOS DA ETAPA:
-            {requirements_text}
+REQUISITOS DA ETAPA:
+{{REQUIREMENTS_LIST}}
 
-            INFORMAÇÕES DO CANDIDATO:
-            {text_content}
+INFORMAÇÕES DO CANDIDATO:
+{{CANDIDATE_INFO}}
 
-            Por favor, forneça uma análise detalhada no seguinte formato JSON:
+Forneça uma análise detalhada em JSON válido com as chaves: score (0-10), analysis (texto), matched_requirements (lista), missing_requirements (lista), strengths (lista), weaknesses (lista), recommendations (lista).
+"""
 
-            {{
-                "score": 8.5,
-                "analysis": "Análise geral do candidato...",
-                "matched_requirements": ["Experiência em vendas", "Fluência em inglês"],
-                "missing_requirements": ["Conhecimento em CRM"],
-                "strengths": ["5+ anos de experiência", "Comunicação clara"],
-                "weaknesses": ["Falta experiência com equipes grandes"],
-                "recommendations": ["Considerar para próxima etapa", "Avaliar em entrevista técnica"]
-            }}
-
-            Seja objetivo, justo e detalhado na análise. A pontuação deve ser de 0 a 10.
-            """
+            prompt = (
+                base_prompt
+                .replace("{{STAGE_DESCRIPTION}}", stage_description)
+                .replace("{{REQUIREMENTS_LIST}}", requirements_text)
+                .replace("{{CANDIDATE_INFO}}", text_content)
+            )
 
             response = await client.post(
                 "https://api.openai.com/v1/chat/completions",
@@ -172,8 +183,8 @@ async def analyze_candidate_with_openai(
 
 # Análise simulada (fallback)
 async def analyze_candidate_simulated(
-    text_content: str, 
-    stage_description: str, 
+    text_content: str,
+    stage_description: str,
     requirements: list[dict]
 ) -> EvaluationResult:
     """
@@ -242,15 +253,20 @@ async def analyze_candidate_simulated(
 # Buscar configurações do usuário (simulado - em produção, buscar do DB)
 async def get_user_ai_config(user_id: str) -> AIConfig:
     """
-    Busca configurações da IA do usuário
-    Em produção, buscar do banco de dados
+    Busca configurações da IA do usuário.
+    Se não houver configuração persistida, utiliza variáveis de ambiente como fallback.
     """
-    # Por enquanto, retorna configuração padrão
+    # TODO: Integrar com Supabase ou serviço BFF para buscar settings reais por usuário
+    env_api_key = os.getenv("OPENAI_API_KEY", "")
+    env_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    env_temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
+    env_max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "2000"))
+
     return AIConfig(
-        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-        model="gpt-4o-mini",
-        temperature=0.3,
-        max_tokens=2000
+        openai_api_key=env_api_key,
+        model=env_model,
+        temperature=env_temperature,
+        max_tokens=env_max_tokens,
     )
 
 @app.post("/v1/transcribe", response_model=RunStatus)
@@ -319,18 +335,29 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
         
         # Buscar configurações da IA do usuário
         config = await get_user_ai_config(request.user_id or "default")
-        
-        # Simula busca de configuração da etapa (em produção, buscar do DB)
-        stage_description = "Avaliar experiência em vendas e atendimento ao cliente"
-        requirements = [
-            {"label": "Experiência em vendas", "description": "Pelo menos 2 anos", "weight": 2.0},
-            {"label": "Fluência em inglês", "description": "Conversação fluente", "weight": 1.5},
-            {"label": "CRM", "description": "Conhecimento em sistemas CRM", "weight": 1.0}
+
+        # Define descrição da etapa e requisitos com base no payload fornecido
+        stage_description = request.stage.name or "Etapa do processo seletivo"
+        if request.stage.job_description:
+            stage_description += f"\nDescrição da vaga: {request.stage.job_description}"
+        requirements_payload = [
+            {
+                "label": req.label or "",
+                "description": req.description or "",
+                "weight": req.weight or 1.0,
+            }
+            for req in (request.requirements or [])
         ]
-        
+
         # Análise da IA
         runs[run_id]["progress"] = 90
-        evaluation = await analyze_candidate_with_openai(text_content, stage_description, requirements, config)
+        evaluation = await analyze_candidate_with_openai(
+            text_content,
+            stage_description,
+            requirements_payload,
+            config,
+            prompt_template=request.prompt_template,
+        )
         
         runs[run_id]["status"] = "succeeded"
         runs[run_id]["progress"] = 100
@@ -343,7 +370,10 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
             "weaknesses": evaluation.weaknesses,
             "recommendations": evaluation.recommendations,
             "stage_id": request.stage_id,
-            "application_id": request.application_id
+            "application_id": request.application_id,
+            "prompt_template": request.prompt_template,
+            "stage": request.stage.dict() if request.stage else None,
+            "requirements": [req.dict() for req in (request.requirements or [])],
         }
         runs[run_id]["finished_at"] = datetime.now().isoformat()
         

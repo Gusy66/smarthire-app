@@ -6,11 +6,11 @@ type Params = { params: Promise<{ stageId: string }> }
 export async function PUT(req: NextRequest, { params }: Params) {
   const { stageId } = await params
   const body = await req.json()
-  const { name, order_index, threshold, stage_weight } = body || {}
+  const { name, order_index, threshold, stage_weight, description } = body || {}
   const supabase = getSupabaseAdmin()
   const { error } = await supabase
     .from('job_stages')
-    .update({ name, order_index, threshold, stage_weight })
+    .update({ name, order_index, threshold, stage_weight, description })
     .eq('id', stageId)
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
   return Response.json({ ok: true })

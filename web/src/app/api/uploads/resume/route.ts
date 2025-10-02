@@ -7,7 +7,8 @@ export async function POST(req: NextRequest) {
     const { filename = 'resume.pdf', content_type = 'application/pdf' } = body || {}
     const supabase = getSupabaseAdmin()
     const bucket = 'resumes'
-    const path = `${Date.now()}-${filename}`
+    const sanitized = sanitizeFilename(filename)
+    const path = `${Date.now()}-${sanitized}`
     
     console.log('Creating signed URL for:', { bucket, path, content_type })
     
@@ -52,6 +53,14 @@ export async function POST(req: NextRequest) {
       } 
     }, { status: 500 })
   }
+}
+
+function sanitizeFilename(name: string) {
+  const base = (name || 'arquivo.pdf')
+    .normalize('NFD')
+    .replace(/[^\w.\-]/g, '_')
+    .replace(/_+/g, '_')
+  return base.length > 0 ? base : 'arquivo.pdf'
 }
 
 

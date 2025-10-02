@@ -31,19 +31,70 @@ export async function requireUser(): Promise<AuthedUser> {
   const { data, error } = await supabase.auth.getUser(accessToken)
   if (error || !data.user) throw new Error('unauthorized')
   const userId = data.user.id
+  const userEmail = data.user.email ?? ''
+  const metadata = data.user.user_metadata ?? {}
 
   const admin = getSupabaseAdmin()
   const { data: profile, error: profileError } = await admin
     .from('users')
     .select('company_id')
     .eq('id', userId)
-    .single()
+    .maybeSingle()
 
-  if (profileError || !profile?.company_id) {
+  if (profile?.company_id && !profileError) {
+    return { id: userId, company_id: profile.company_id }
+  }
+
+  // Auto provision company and user entry when missing
+  const rawCompany = typeof metadata.company === 'string' ? metadata.company.trim() : ''
+  const fallbackCompany = userEmail ? `Empresa ${userEmail.split('@')[0]}` : 'Minha Empresa'
+  const companyName = rawCompany || fallbackCompany
+
+  // Garante empresa
+  let companyId: string | null = null
+  const { data: existingCompany, error: existingCompanyError } = await admin
+    .from('companies')
+    .select('id')
+    .eq('name', companyName)
+    .maybeSingle()
+
+  if (!existingCompanyError && existingCompany?.id) {
+    companyId = existingCompany.id
+  } else {
+    const { data: insertedCompany, error: insertCompanyError } = await admin
+      .from('companies')
+      .insert({ name: companyName })
+      .select('id')
+      .single()
+
+    if (insertCompanyError) {
+      console.error('Falha ao criar empresa automática:', insertCompanyError)
+      throw new Error('missing_company')
+    }
+    companyId = insertedCompany.id
+  }
+
+  if (!companyId) throw new Error('missing_company')
+
+  const userName = typeof metadata.name === 'string' && metadata.name.trim().length > 0 ? metadata.name.trim() : (userEmail || 'Usuário')
+  const userRole = typeof metadata.role === 'string' && metadata.role.trim().length > 0 ? metadata.role.trim() : 'admin'
+
+  const { error: upsertError } = await admin
+    .from('users')
+    .upsert({
+      id: userId,
+      company_id: companyId,
+      email: userEmail,
+      name: userName,
+      role: (userRole as 'admin' | 'recruiter' | 'interviewer'),
+    })
+
+  if (upsertError) {
+    console.error('Falha ao provisionar usuário automaticamente:', upsertError)
     throw new Error('missing_company')
   }
 
-  return { id: userId, company_id: profile.company_id }
+  return { id: userId, company_id: companyId }
 }
 
 

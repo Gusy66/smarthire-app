@@ -23,7 +23,8 @@ export async function GET() {
     if (error?.message === 'unauthorized') {
       return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
     }
-    return Response.json({ error: { code: 'internal_error', message: 'Erro interno do servidor' } }, { status: 500 })
+    console.error('prompt-templates POST error:', error)
+    return Response.json({ error: { code: 'internal_error', message: error?.message || 'Erro interno do servidor' } }, { status: 500 })
   }
 }
 

@@ -52,10 +52,10 @@ export default function JobsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, status: 'open' }),
       })
-      if (!res.ok) { const err = await res.json(); notify.notify({ title: 'Erro ao criar vaga', description: err.error?.message, variant: 'error' }); return }
+      if (!res.ok) { const err = await res.json(); notify({ title: 'Erro ao criar vaga', description: err.error?.message, variant: 'error' }); return }
       setForm({ title: '', description: '', location: '' })
       await fetchJobs()
-      notify.notify({ title: 'Vaga criada com sucesso', variant: 'success' })
+      notify({ title: 'Vaga criada com sucesso', variant: 'success' })
     } finally {
       setLoading(false)
     }

@@ -8,7 +8,7 @@ export async function GET(_: NextRequest, { params }: Params) {
   const supabase = getSupabaseAdmin()
   const { data, error } = await supabase
     .from('job_stages')
-    .select('id, name, order_index, threshold, stage_weight, created_at')
+    .select('id, name, description, order_index, threshold, stage_weight, created_at')
     .eq('job_id', id)
     .order('order_index', { ascending: true })
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
@@ -18,12 +18,12 @@ export async function GET(_: NextRequest, { params }: Params) {
 export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params
   const body = await req.json()
-  const { name, order_index = 0, threshold = 0, stage_weight = 1 } = body || {}
+  const { name, description = null, order_index = 0, threshold = 0, stage_weight = 1 } = body || {}
   if (!name) return Response.json({ error: { code: 'validation_error', message: 'name is required' } }, { status: 400 })
   const supabase = getSupabaseAdmin()
   const { data, error } = await supabase
     .from('job_stages')
-    .insert({ job_id: id, name, order_index, threshold, stage_weight })
+    .insert({ job_id: id, name, description, order_index, threshold, stage_weight })
     .select('id')
     .single()
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })

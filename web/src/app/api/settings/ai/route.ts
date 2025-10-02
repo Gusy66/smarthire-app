@@ -1,21 +1,17 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../../_lib/supabaseAdmin'
-import { getUserIdFromCookie } from '../../_lib/auth'
+import { requireUser } from '../../_lib/auth'
 
 export async function GET(req: NextRequest) {
   try {
     const supabase = getSupabaseAdmin()
-    const userId = await getUserIdFromCookie()
-    
-    if (!userId) {
-      return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
-    }
+    const user = await requireUser()
 
     // Buscar configurações do usuário
     const { data, error } = await supabase
       .from('ai_settings')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', user.id)
       .single()
 
     if (error && error.code !== 'PGRST116') {
@@ -40,11 +36,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const supabase = getSupabaseAdmin()
-    const userId = await getUserIdFromCookie()
-    
-    if (!userId) {
-      return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
-    }
+    const user = await requireUser()
 
     const body = await req.json()
     const { openai_api_key, model, temperature, max_tokens } = body
@@ -69,7 +61,7 @@ export async function POST(req: NextRequest) {
     const { error } = await supabase
       .from('ai_settings')
       .upsert({
-        user_id: userId,
+        user_id: user.id,
         openai_api_key: encryptedApiKey,
         model,
         temperature,
