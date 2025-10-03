@@ -1,5 +1,4 @@
 import type { NextConfig } from "next";
-import { withCloudflare } from "@cloudflare/next-on-pages/next";
 
 const nextConfig: NextConfig = {
   eslint: {
@@ -10,4 +9,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withCloudflare(nextConfig);
+export default nextConfig;
