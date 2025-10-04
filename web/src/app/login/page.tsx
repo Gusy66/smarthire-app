@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ToastProvider'
@@ -13,6 +13,27 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [magicLoading, setMagicLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!cancelled && data.session) {
+        router.replace('/jobs')
+      }
+    })
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!cancelled && event === 'SIGNED_IN' && session) {
+        router.replace('/jobs')
+      }
+    })
+
+    return () => {
+      cancelled = true
+      subscription?.subscription?.unsubscribe?.()
+    }
+  }, [router, supabase])
 
   async function signInEmailPass(e: React.FormEvent) {
     e.preventDefault()

@@ -4,6 +4,9 @@ import { useEffect } from 'react'
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser'
 
 async function syncSession(event: string, session: any) {
+  if (event === 'INITIAL_SESSION' && !session?.access_token) {
+    return
+  }
   try {
     await fetch('/api/auth/session', {
       method: 'POST',
