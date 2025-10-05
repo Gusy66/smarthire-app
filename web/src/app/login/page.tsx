@@ -81,7 +81,9 @@ export default function LoginPage() {
   async function sendMagicLink(e: React.FormEvent) {
     e.preventDefault()
     setMagicLoading(true)
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: `${window.location.origin}/jobs` } })
+    const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || window.location.origin).replace(/\/$/, '')
+    const redirectTo = `${baseUrl}/jobs`
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } })
     setMagicLoading(false)
     if (error) { notify({ title: 'Erro ao enviar link', description: error.message, variant: 'error' }); return }
     notify({ title: 'Link enviado', description: 'Verifique seu e-mail', variant: 'success' })
