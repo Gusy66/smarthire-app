@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../../../_lib/supabaseAdmin'
+import { requireUser } from '../../../_lib/auth'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -7,6 +8,17 @@ type Params = { params: Promise<{ id: string }> }
 export async function GET(_: NextRequest, { params }: Params) {
   const { id: jobId } = await params
   const supabase = getSupabaseAdmin()
+  const user = await requireUser()
+
+  const { data: job, error: jobError } = await supabase
+    .from('jobs')
+    .select('id, company_id')
+    .eq('id', jobId)
+    .maybeSingle()
+
+  if (jobError || !job || job.company_id !== user.company_id) {
+    return Response.json({ error: { code: 'forbidden', message: 'Vaga não encontrada' } }, { status: 404 })
+  }
 
   const [{ data: apps }, { data: stages }] = await Promise.all([
     supabase.from('applications').select('id, candidate_id').eq('job_id', jobId),

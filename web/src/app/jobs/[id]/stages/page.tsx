@@ -134,7 +134,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         items.forEach((stage) => { next[stage.id] = prev[stage.id] ?? false })
         return next
       })
-      // carregar candidatos (MVP: todos)
+      // carregar candidatos (somente do usuário)
       const cand = await fetch('/api/candidates').then((r) => r.json()).catch(() => ({ items: [] }))
       setCandidates(cand.items || [])
       const apps = await fetch(`/api/jobs/${id}/applications`).then((r) => r.json()).catch(() => ({ items: [] }))
@@ -467,16 +467,20 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                 }}
               />
             </div>
-            <StageAnalysisPanel
-              stageId={s.id}
-              candidateId={stageSelectedCandidates[s.id] ?? null}
-              candidateName={candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null}
-              analysis={analysisByStage[s.id] || null}
-              loading={Boolean(analysisLoading[s.id])}
-              expanded={analysisExpanded[s.id] ?? false}
-              onToggle={() => setAnalysisExpanded((prev) => ({ ...prev, [s.id]: !(prev[s.id] ?? false) }))}
-              onRefresh={() => loadAnalysisForStage(s.id, stageSelectedCandidates[s.id] ?? null)}
-            />
+            {stageSelectedCandidates[s.id] ? (
+              <StageAnalysisPanel
+                stageId={s.id}
+                candidateId={stageSelectedCandidates[s.id] ?? null}
+                candidateName={candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null}
+                analysis={analysisByStage[s.id] || null}
+                loading={Boolean(analysisLoading[s.id])}
+                expanded={analysisExpanded[s.id] ?? false}
+                onToggle={() => setAnalysisExpanded((prev) => ({ ...prev, [s.id]: !(prev[s.id] ?? false) }))}
+                onRefresh={() => loadAnalysisForStage(s.id, stageSelectedCandidates[s.id] ?? null)}
+              />
+            ) : (
+              <p className="text-sm text-gray-500">Selecione um candidato acima para visualizar a análise.</p>
+            )}
             <div className="pt-2">
               <h3 className="font-medium mb-2">Requisitos</h3>
               <RequirementsCrud

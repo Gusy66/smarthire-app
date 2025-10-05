@@ -1,11 +1,24 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../../../_lib/supabaseAdmin'
+import { requireUser } from '../../../_lib/auth'
 
 type Params = { params: Promise<{ id: string }> }
 
 export async function GET(_: NextRequest, { params }: Params) {
   const { id: jobId } = await params
   const supabase = getSupabaseAdmin()
+  const user = await requireUser()
+
+  const { data: job, error: jobError } = await supabase
+    .from('jobs')
+    .select('id, company_id')
+    .eq('id', jobId)
+    .maybeSingle()
+
+  if (jobError || !job || job.company_id !== user.company_id) {
+    return Response.json({ error: { code: 'forbidden', message: 'Vaga não encontrada' } }, { status: 404 })
+  }
+
   const { data: apps, error } = await supabase
     .from('applications')
     .select('id, candidate_id, created_at')
@@ -35,6 +48,18 @@ export async function POST(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'validation_error', message: 'candidate_id é obrigatório' } }, { status: 400 })
   }
   const supabase = getSupabaseAdmin()
+  const user = await requireUser()
+
+  const { data: job, error: jobError } = await supabase
+    .from('jobs')
+    .select('company_id')
+    .eq('id', jobId)
+    .maybeSingle()
+
+  if (jobError || !job || job.company_id !== user.company_id) {
+    return Response.json({ error: { code: 'forbidden', message: 'Vaga não encontrada' } }, { status: 404 })
+  }
+
   const { data, error } = await supabase
     .from('applications')
     .insert({ candidate_id, job_id: jobId })

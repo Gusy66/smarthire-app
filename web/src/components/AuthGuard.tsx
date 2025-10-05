@@ -19,6 +19,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       // aguarda eventos de auth por alguns instantes (caso de primeiro login)
       timer = setTimeout(() => {
         if (!cancelled) {
+          supabase.auth.signOut().catch(() => {})
           try { window.location.replace('/login') } catch { router.replace('/login') }
         }
       }, 1200)
