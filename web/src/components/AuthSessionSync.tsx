@@ -4,7 +4,7 @@ import { useEffect } from 'react'
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser'
 
 async function syncSession(event: string, session: any) {
-  if (event === 'INITIAL_SESSION' && !session?.access_token) {
+  if (!session?.access_token && event !== 'SIGNED_OUT') {
     return
   }
   try {
