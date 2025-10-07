@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useToast } from '@/components/ToastProvider'
+import StageAnalysisPanel from './_components/StageAnalysisPanel'
 
 type Stage = { id: string; name: string; description: string | null; order_index: number; threshold: number; stage_weight: number }
-type Requirement = { id: string; label: string; weight: number; description?: string }
 type Candidate = { id: string; name: string; email?: string }
 type PromptTemplate = { id: string; name: string; is_default: boolean }
 type StageAnalysisResult = {
@@ -83,17 +83,32 @@ async function fetchPromptTemplates(): Promise<PromptTemplate[]> {
 }
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
-  const json = await res.json()
-  if (!res.ok) throw new Error(json?.error?.message || 'Erro de API')
-  return json
+  const res = await fetch(url, {
+    credentials: 'same-origin',
+    ...(init || {}),
+  })
+  const text = await res.text()
+  let json: any = null
+  try {
+    json = text ? JSON.parse(text) : null
+  } catch (error) {
+    if (!res.ok) {
+      const message = text || res.statusText || 'Erro de API'
+      throw new Error(message)
+    }
+    throw error
+  }
+  if (!res.ok) {
+    const message = json?.error?.message || text || res.statusText || 'Erro de API'
+    throw new Error(message)
+  }
+  return (json ?? {}) as T
 }
 
 export default function JobStagesPage({ params }: { params: Promise<{ id: string }> }) {
   const { notify } = useToast()
   const [jobId, setJobId] = useState<string | null>(null)
   const [stages, setStages] = useState<Stage[]>([])
-  const [reqs, setReqs] = useState<Record<string, Requirement[]>>({})
   const [creating, setCreating] = useState(false)
   const [stageForm, setStageForm] = useState({ name: '', description: '', threshold: 0, stage_weight: 1 })
   const [editingStageId, setEditingStageId] = useState<string | null>(null)
@@ -117,6 +132,12 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     ;(async () => {
       const { id } = await params
       setJobId(id)
+      const job = await api<{ item?: { id: string; title: string } }>(`/api/jobs/${id}`)
+      if (!job?.item) {
+        notify({ title: 'Vaga não encontrada', variant: 'error' })
+        return
+      }
+
       const { items } = await api<{ items: Stage[] }>(`/api/jobs/${id}/stages`)
       setStages(items)
       setAnalysisByStage((prev) => {
@@ -135,9 +156,9 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         return next
       })
       // carregar candidatos (somente do usuário)
-      const cand = await fetch('/api/candidates').then((r) => r.json()).catch(() => ({ items: [] }))
+      const cand = await api<{ items: Candidate[] }>('/api/candidates').catch(() => ({ items: [] }))
       setCandidates(cand.items || [])
-      const apps = await fetch(`/api/jobs/${id}/applications`).then((r) => r.json()).catch(() => ({ items: [] }))
+      const apps = await api<{ items: any[] }>(`/api/jobs/${id}/applications`).catch(() => ({ items: [] }))
       setApplications(apps.items || [])
       try {
         const pts = await fetchPromptTemplates()
@@ -148,14 +169,9 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     })()
   }, [params])
 
-  async function loadRequirements(stageId: string) {
-    const { items } = await api<{ items: Requirement[] }>(`/api/stages/${stageId}/requirements`)
-    setReqs((r) => ({ ...r, [stageId]: items }))
-  }
 
   useEffect(() => {
     stages.forEach((s) => {
-      if (!reqs[s.id]) loadRequirements(s.id)
       if (!stagePromptMap.hasOwnProperty(s.id)) loadPromptForStage(s.id)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -229,14 +245,17 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
 
   const loadAnalysisForStage = useCallback(async (stageId: string, candidateId: string | null) => {
     if (!candidateId) {
+      console.log(`[DEBUG] loadAnalysisForStage: candidato não selecionado para etapa ${stageId}`)
       setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
       return
     }
     const applicationId = getApplicationId(candidateId)
     if (!applicationId) {
+      console.log(`[DEBUG] loadAnalysisForStage: applicationId não encontrado para candidato ${candidateId}`)
       setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
       return
     }
+    console.log(`[DEBUG] Carregando análise para etapa ${stageId}, candidato ${candidateId}, applicationId ${applicationId}`)
     setAnalysisLoading((prev) => ({ ...prev, [stageId]: true }))
     try {
       const res = await fetch(`/api/stages/${stageId}/analysis?application_id=${encodeURIComponent(applicationId)}`)
@@ -245,6 +264,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         throw new Error(err?.error?.message || 'Erro ao buscar análise da IA')
       }
       const json = await res.json()
+      console.log(`[DEBUG] Análise carregada para etapa ${stageId}:`, json.item)
       setAnalysisByStage((prev) => ({ ...prev, [stageId]: json.item || null }))
     } catch (error: any) {
       console.error('Erro ao carregar análise da etapa', error)
@@ -254,6 +274,56 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       setAnalysisLoading((prev) => ({ ...prev, [stageId]: false }))
     }
   }, [getApplicationId, notify])
+
+  // Função para carregar automaticamente a análise mais recente de cada etapa
+  const loadLatestAnalysisForStage = useCallback(async (stageId: string) => {
+    console.log(`[DEBUG] Carregando análise mais recente para etapa ${stageId}`)
+    setAnalysisLoading((prev) => ({ ...prev, [stageId]: true }))
+    try {
+      const res = await fetch(`/api/stages/${stageId}/analysis/latest`)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        if (err?.error?.code === 'not_found') {
+          console.log(`[DEBUG] Nenhuma análise encontrada para etapa ${stageId}`)
+          setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
+          return
+        }
+        throw new Error(err?.error?.message || 'Erro ao buscar análise da IA')
+      }
+      const json = await res.json()
+      console.log(`[DEBUG] Análise mais recente carregada para etapa ${stageId}:`, json.item)
+      if (json.item) {
+        setAnalysisByStage((prev) => ({ ...prev, [stageId]: json.item }))
+        setAnalysisExpanded((prev) => ({ ...prev, [stageId]: true }))
+        // Selecionar automaticamente o candidato da análise
+        if (json.item.application_id) {
+          const candidate = applications.find(app => app.id === json.item.application_id)?.candidate_id
+          if (candidate) {
+            setStageSelectedCandidates((prev) => ({ ...prev, [stageId]: candidate }))
+          }
+        }
+      } else {
+        setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
+      }
+    } catch (error: any) {
+      console.error('Erro ao carregar análise mais recente da etapa', error)
+      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
+    } finally {
+      setAnalysisLoading((prev) => ({ ...prev, [stageId]: false }))
+    }
+  }, [applications])
+
+  // Carregar automaticamente a análise mais recente para cada etapa
+  useEffect(() => {
+    console.log(`[DEBUG] useEffect auto-load: stages=${stages.length}, applications=${applications.length}`)
+    if (stages.length > 0 && applications.length > 0) {
+      console.log(`[DEBUG] Carregando análises automáticas para ${stages.length} etapas`)
+      stages.forEach((stage) => {
+        console.log(`[DEBUG] Carregando análise para etapa: ${stage.id} - ${stage.name}`)
+        loadLatestAnalysisForStage(stage.id)
+      })
+    }
+  }, [stages, applications, loadLatestAnalysisForStage])
 
   const handleStageCandidateSelection = useCallback((stageId: string, candidateId: string | null) => {
     setStageSelectedCandidates((prev) => ({ ...prev, [stageId]: candidateId }))
@@ -356,142 +426,215 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         </div>
       </section>
 
-      <section className="space-y-6">
-        <h2 className="font-medium">Etapas da vaga</h2>
-        {stages.map((s) => (
-          <div key={s.id} className="card p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex-1 pr-4">
-                {editingStageId === s.id ? (
-                  <div className="grid gap-2">
-                    <input
-                      value={editingStageForm.name}
-                      onChange={(e) => setEditingStageForm((f) => ({ ...f, name: e.target.value }))}
-                      className="border rounded px-2 py-1"
-                    />
-                    <textarea
-                      value={editingStageForm.description}
-                      onChange={(e) => setEditingStageForm((f) => ({ ...f, description: e.target.value }))}
-                      className="border rounded px-2 py-1"
-                      rows={3}
-                    />
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={editingStageForm.threshold}
-                        onChange={(e) => setEditingStageForm((f) => ({ ...f, threshold: Number(e.target.value) }))}
-                        className="border rounded px-2 py-1"
-                      />
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={editingStageForm.stage_weight}
-                        onChange={(e) => setEditingStageForm((f) => ({ ...f, stage_weight: Number(e.target.value) }))}
-                        className="border rounded px-2 py-1"
-                      />
+      {/* Header simples */}
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Etapas da Vaga</h1>
+        <p className="text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
+      </div>
+
+      {/* Layout principal com etapas à esquerda e análise à direita */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Etapas à esquerda */}
+        <div className="lg:col-span-2 space-y-6">
+          <h2 className="text-xl font-semibold text-gray-900">Etapas Configuradas</h2>
+          {stages.map((s) => (
+            <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+              {/* Header da etapa */}
+              <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 pr-4">
+                    {editingStageId === s.id ? (
+                      <div className="grid gap-3">
+                        <input
+                          value={editingStageForm.name}
+                          onChange={(e) => setEditingStageForm((f) => ({ ...f, name: e.target.value }))}
+                          className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          placeholder="Nome da etapa"
+                        />
+                        <textarea
+                          value={editingStageForm.description}
+                          onChange={(e) => setEditingStageForm((f) => ({ ...f, description: e.target.value }))}
+                          className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          rows={3}
+                          placeholder="Descrição detalhada da etapa"
+                        />
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Threshold</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={editingStageForm.threshold}
+                              onChange={(e) => setEditingStageForm((f) => ({ ...f, threshold: Number(e.target.value) }))}
+                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Peso</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={editingStageForm.stage_weight}
+                              onChange={(e) => setEditingStageForm((f) => ({ ...f, stage_weight: Number(e.target.value) }))}
+                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
+                          <div className="flex items-center gap-2 text-sm text-gray-500">
+                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                              Threshold: {s.threshold}
+                            </span>
+                            <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
+                              Peso: {s.stage_weight}
+                            </span>
+                          </div>
+                        </div>
+                        {s.description && (
+                          <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">{s.description}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  {editingStageId === s.id ? (
+                    <div className="flex gap-2">
+                      <button 
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200" 
+                        onClick={async()=>{
+                          await fetch(`/api/stages/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingStageForm) })
+                          const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`)
+                          setStages(items); setEditingStageId(null)
+                          notify({ title: 'Etapa atualizada', variant: 'success' })
+                        }}
+                      >
+                        Salvar
+                      </button>
+                      <button 
+                        className="border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200" 
+                        onClick={()=>setEditingStageId(null)}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button 
+                        className="text-blue-600 hover:text-blue-700 text-sm font-medium transition-colors duration-200" 
+                        onClick={()=>{ setEditingStageId(s.id); setEditingStageForm({ name: s.name, description: s.description || '', threshold: s.threshold, stage_weight: s.stage_weight }) }}
+                      >
+                        Editar
+                      </button>
+                      <button 
+                        className="text-red-600 hover:text-red-700 text-sm font-medium transition-colors duration-200" 
+                        onClick={async()=>{ if(!confirm('Remover etapa?')) return; await fetch(`/api/stages/${s.id}`, { method: 'DELETE' }); const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`); setStages(items); notify({ title: 'Etapa removida', variant: 'success' }) }}
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Conteúdo da etapa */}
+              <div className="p-6 space-y-6">
+                <StagePromptSelector
+                  stageId={s.id}
+                  templates={promptTemplates}
+                  selected={stagePromptMap[s.id] ?? null}
+                  loading={promptLoadingStage === s.id}
+                  onChange={handleStagePromptChange}
+                />
+                
+                {/* Seção de análise de candidato */}
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h4 className="font-semibold text-gray-900 mb-4 flex items-center">
+                    <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    Análise de Candidato
+                  </h4>
+                  
+                  {/* Seletor de candidato */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Candidato para avaliação:</label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <select
+                        className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        value={stageSelectedCandidates[s.id] ?? ''}
+                        onChange={(e) => {
+                          console.log('[DEBUG] Candidato selecionado para etapa', s.id, ':', e.target.value)
+                          handleStageCandidateSelection(s.id, e.target.value || null)
+                        }}
+                      >
+                        <option value="">Selecione um candidato</option>
+                        {applications.map((app) => {
+                          const candidate = candidates.find(c => c.id === app.candidate_id)
+                          return (
+                            <option key={app.id} value={app.candidate_id}>
+                              {candidate?.name || app.candidate_id} {candidate?.email ? `(${candidate.email})` : ''}
+                            </option>
+                          )
+                        })}
+                      </select>
+                      {stageSelectedCandidates[s.id] && (
+                        <span className="text-sm text-green-600 font-medium flex items-center px-2 py-1 bg-green-50 rounded-md">
+                          ✓ {candidates.find(c => c.id === stageSelectedCandidates[s.id])?.name}
+                        </span>
+                      )}
                     </div>
                   </div>
-                ) : (
-                  <>
-                    <div className="font-medium">{s.name}</div>
-                    {s.description && <p className="text-sm text-gray-600 whitespace-pre-wrap">{s.description}</p>}
-                    <div className="text-sm text-gray-600">Threshold: {s.threshold} • Peso: {s.stage_weight}</div>
-                  </>
-                )}
-              </div>
-              {editingStageId === s.id ? (
-                <div className="flex gap-2">
-                  <button className="bg-black text-white rounded px-3 py-1" onClick={async()=>{
-        await fetch(`/api/stages/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingStageForm) })
-                    const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`)
-        setStages(items); setEditingStageId(null)
-                    notify({ title: 'Etapa atualizada', variant: 'success' })
-                  }}>Salvar</button>
-                  <button className="border rounded px-3 py-1" onClick={()=>setEditingStageId(null)}>Cancelar</button>
+                  
+                  {/* Componente de upload e análise */}
+                  <UploadAndEvaluate 
+                    stageId={s.id} 
+                    applicationId={getApplicationId(stageSelectedCandidates[s.id])}
+                    candidateName={candidates.find(c => c.id === stageSelectedCandidates[s.id])?.name}
+                    onRunFinished={(stageId, runId, applicationStageId) => {
+                      console.log(`[DEBUG] onRunFinished chamado para stageId: ${stageId}, runId: ${runId}`)
+                      const currentCandidate = stageSelectedCandidates[stageId] ?? null
+                      console.log(`[DEBUG] Candidato atual para etapa ${stageId}: ${currentCandidate}`)
+                      if (currentCandidate) {
+                        console.log(`[DEBUG] Recarregando análise para etapa ${stageId}`)
+                        loadAnalysisForStage(stageId, currentCandidate)
+                        setAnalysisExpanded((prev) => ({ ...prev, [stageId]: true }))
+                      } else {
+                        console.log(`[DEBUG] Nenhum candidato selecionado para etapa ${stageId}`)
+                      }
+                    }}
+                  />
                 </div>
-              ) : (
-                <div className="flex gap-2">
-                  <button className="text-blue-600 underline" onClick={()=>{ setEditingStageId(s.id); setEditingStageForm({ name: s.name, description: s.description || '', threshold: s.threshold, stage_weight: s.stage_weight }) }}>Editar</button>
-                  <button className="text-red-600 underline" onClick={async()=>{ if(!confirm('Remover etapa?')) return; await fetch(`/api/stages/${s.id}`, { method: 'DELETE' }); const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`); setStages(items); notify({ title: 'Etapa removida', variant: 'success' }) }}>Remover</button>
-                </div>
-              )}
-            </div>
-
-            <StagePromptSelector
-              stageId={s.id}
-              templates={promptTemplates}
-              selected={stagePromptMap[s.id] ?? null}
-              loading={promptLoadingStage === s.id}
-              onChange={handleStagePromptChange}
-            />
-            
-            {/* Seletor de candidato para esta etapa específica */}
-            <div className="border-t pt-3">
-              <h4 className="font-medium mb-2">Candidato para avaliação nesta etapa:</h4>
-              <div className="flex gap-2 items-center">
-                <select
-                  className="border rounded px-3 py-2 flex-1"
-                  value={stageSelectedCandidates[s.id] ?? ''}
-                  onChange={(e) => handleStageCandidateSelection(s.id, e.target.value || null)}
-                >
-                  <option value="">Selecione um candidato</option>
-                  {applications.map((app) => {
-                    const candidate = candidates.find(c => c.id === app.candidate_id)
-                    return (
-                      <option key={app.id} value={app.candidate_id}>
-                        {candidate?.name || app.candidate_id} {candidate?.email ? `(${candidate.email})` : ''}
-                      </option>
-                    )
-                  })}
-                </select>
-                {stageSelectedCandidates[s.id] && (
-                  <span className="text-sm text-green-600">
-                    ✓ {candidates.find(c => c.id === stageSelectedCandidates[s.id])?.name}
-                  </span>
-                )}
               </div>
             </div>
+          ))}
+        </div>
 
-            <div className="grid gap-3">
-              <UploadAndEvaluate 
-                stageId={s.id} 
-                applicationId={getApplicationId(stageSelectedCandidates[s.id])}
-                candidateName={candidates.find(c => c.id === stageSelectedCandidates[s.id])?.name}
-                onRunFinished={(stageId, runId, applicationStageId) => {
-                  const currentCandidate = stageSelectedCandidates[stageId] ?? null
-                  if (currentCandidate) {
-                    loadAnalysisForStage(stageId, currentCandidate)
-                    setAnalysisExpanded((prev) => ({ ...prev, [stageId]: true }))
-                  }
-                }}
-              />
-            </div>
-            {stageSelectedCandidates[s.id] ? (
-              <StageAnalysisPanel
-                stageId={s.id}
-                candidateId={stageSelectedCandidates[s.id] ?? null}
-                candidateName={candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null}
-                analysis={analysisByStage[s.id] || null}
-                loading={Boolean(analysisLoading[s.id])}
-                expanded={analysisExpanded[s.id] ?? false}
-                onToggle={() => setAnalysisExpanded((prev) => ({ ...prev, [s.id]: !(prev[s.id] ?? false) }))}
-                onRefresh={() => loadAnalysisForStage(s.id, stageSelectedCandidates[s.id] ?? null)}
-              />
-            ) : (
-              <p className="text-sm text-gray-500">Selecione um candidato acima para visualizar a análise.</p>
-            )}
-            <div className="pt-2">
-              <h3 className="font-medium mb-2">Requisitos</h3>
-              <RequirementsCrud
-                stageId={s.id}
-                requirements={reqs[s.id] || []}
-                onChanged={() => loadRequirements(s.id)}
-              />
+        {/* Painel de análise à direita */}
+        <div className="lg:col-span-1">
+          <div className="sticky top-4">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Análises de Candidatos</h2>
+            <div className="space-y-4">
+              {stages.map((s) => (
+                <StageAnalysisPanel
+                  key={s.id}
+                  candidateName={stageSelectedCandidates[s.id] ? (candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null) : null}
+                  analysis={stageSelectedCandidates[s.id] ? (analysisByStage[s.id] || null) : null}
+                  loading={Boolean(analysisLoading[s.id])}
+                  expanded={analysisExpanded[s.id] ?? false}
+                  onToggle={() => setAnalysisExpanded((prev) => ({ ...prev, [s.id]: !(prev[s.id] ?? false) }))}
+                  onRefresh={() => {
+                    const candidateId = stageSelectedCandidates[s.id] ?? null
+                    if (candidateId) loadAnalysisForStage(s.id, candidateId)
+                  }}
+                />
+              ))}
             </div>
           </div>
-        ))}
-      </section>
+        </div>
+      </div>
 
       <section>
         <h2 className="font-medium">Painel de candidatos (MVP)</h2>
@@ -527,13 +670,20 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
   }
 
   async function handleSubmit() {
+    console.log('[DEBUG] handleSubmit chamado')
+    console.log('[DEBUG] applicationId:', applicationId)
+    console.log('[DEBUG] stageId:', stageId)
     setSubmitting(true)
     try {
       if (!applicationId) {
+        console.log('[DEBUG] applicationId é null - exibindo erro')
         try { const { useToast } = require('@/components/ToastProvider'); const { notify } = useToast(); notify({ title: 'Selecione um candidato', description: 'Atribua um candidato à vaga antes de avaliar a etapa.', variant: 'error' }) } catch {}
         return
       }
+      setPolling(true)
       let resumePath: string | undefined
+      let resumeBucket: string | undefined
+      let resumeSignedUrl: string | undefined
       if (resumeFile) {
         const r = await fetch('/api/uploads/resume', {
           method: 'POST',
@@ -543,8 +693,12 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
         const j = await r.json()
         await uploadToSignedUrl(j.upload_url, resumeFile, resumeFile.type || 'application/pdf')
         resumePath = j.path
+        resumeBucket = j.bucket
+        resumeSignedUrl = j.view_url || undefined
       }
       let audioPath: string | undefined
+      let audioBucket: string | undefined
+      let audioSignedUrl: string | undefined
       if (audioFile) {
         const r = await fetch('/api/uploads/audio', {
           method: 'POST',
@@ -554,9 +708,13 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
         const j = await r.json()
         await uploadToSignedUrl(j.upload_url, audioFile, audioFile.type || 'audio/wav')
         audioPath = j.path
+        audioBucket = j.bucket
+        audioSignedUrl = j.view_url || undefined
       }
 
       let transcriptPath: string | undefined
+      let transcriptBucket: string | undefined
+      let transcriptSignedUrl: string | undefined
       if (transcriptFile) {
         const r = await fetch('/api/uploads/transcript', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -565,36 +723,91 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
         const j = await r.json()
         await uploadToSignedUrl(j.upload_url, transcriptFile, transcriptFile.type || 'application/json')
         transcriptPath = j.path
+        transcriptBucket = j.bucket
+        transcriptSignedUrl = j.view_url || undefined
       }
 
+      const payload: any = {
+        application_id: applicationId,
+        resume_path: resumePath,
+        resume_bucket: resumeBucket,
+        resume_signed_url: resumeSignedUrl,
+        audio_path: audioPath,
+        audio_bucket: audioBucket,
+        audio_signed_url: audioSignedUrl,
+        transcript_path: transcriptPath,
+        transcript_bucket: transcriptBucket,
+        transcript_signed_url: transcriptSignedUrl,
+      }
+
+      console.log('[DEBUG] Enviando payload para avaliação:', payload)
       const evalRes = await fetch(`/api/stages/${stageId}/evaluate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ application_id: applicationId, resume_path: resumePath, audio_path: audioPath, transcript_path: transcriptPath }),
+        body: JSON.stringify(payload),
       })
+      console.log('[DEBUG] Resposta da avaliação:', evalRes.status)
       const evalJson = await evalRes.json()
+      console.log('[DEBUG] JSON da resposta:', evalJson)
       setRunId(evalJson.run_id || null)
       if (evalJson.application_stage_id) setAppStageIdForPoller(evalJson.application_stage_id)
-      // toast via global provider
-      try { const { useToast } = require('@/components/ToastProvider'); const { notify } = useToast(); notify({ title: 'Avaliação iniciada', variant: 'success' }) } catch {}
     } catch (e: any) {
       try { const { useToast } = require('@/components/ToastProvider'); const { notify } = useToast(); notify({ title: 'Erro ao avaliar', description: e?.message, variant: 'error' }) } catch {}
     } finally {
       setSubmitting(false)
+      if (!runId) setPolling(false)
     }
   }
 
   return (
-    <div className="grid gap-3">
+    <div className="space-y-4">
       {candidateName && (
-        <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2 text-sm">
+        <div className="bg-blue-50 border border-blue-200 rounded-md px-3 py-2 text-sm">
           <strong>Avaliando:</strong> {candidateName}
         </div>
       )}
-      <input type="file" accept="application/pdf" className="border rounded px-3 py-2" onChange={(e) => setResumeFile(e.target.files?.[0] || null)} />
-      <input type="file" accept="audio/*" className="border rounded px-3 py-2" onChange={(e) => setAudioFile(e.target.files?.[0] || null)} />
-      <input type="file" accept="application/json" className="border rounded px-3 py-2" onChange={(e) => setTranscriptFile(e.target.files?.[0] || null)} />
-      <button disabled={submitting || !applicationId} onClick={handleSubmit} className="bg-blue-600 text-white rounded px-4 py-2 disabled:opacity-50" title={applicationId ? undefined : 'Selecione um candidato na etapa para habilitar'}>
+      
+      <div className="space-y-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Currículo (PDF)</label>
+          <input 
+            type="file" 
+            accept="application/pdf" 
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+            onChange={(e) => setResumeFile(e.target.files?.[0] || null)} 
+          />
+        </div>
+        
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Áudio</label>
+          <input 
+            type="file" 
+            accept="audio/*" 
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+            onChange={(e) => setAudioFile(e.target.files?.[0] || null)} 
+          />
+        </div>
+        
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Transcrição (JSON)</label>
+          <input 
+            type="file" 
+            accept="application/json" 
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+            onChange={(e) => setTranscriptFile(e.target.files?.[0] || null)} 
+          />
+        </div>
+      </div>
+      
+      <button 
+        disabled={submitting || !applicationId} 
+        onClick={() => {
+          console.log('[DEBUG] Botão Enviar para IA clicado')
+          handleSubmit()
+        }} 
+        className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200" 
+        title={applicationId ? undefined : 'Selecione um candidato na etapa para habilitar'}
+      >
         {submitting ? 'Enviando...' : 'Enviar para IA (transcrever e avaliar)'}
       </button>
       {runId && appStageIdForPoller && (
@@ -606,6 +819,9 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
             if (onRunFinished) {
               onRunFinished(stageId, completedRunId, appStageIdForPoller)
             }
+            setRunId(null)
+            setAppStageIdForPoller(null)
+            setPolling(false)
           }}
         />
       )}
@@ -613,77 +829,23 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
   )
 }
 
-function RequirementsCrud({ stageId, requirements, onChanged }: { stageId: string; requirements: Requirement[]; onChanged: () => void }) {
-  const [label, setLabel] = useState('')
-  const [weight, setWeight] = useState<number>(1)
-  const [description, setDescription] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [editing, setEditing] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState<{ label: string; weight: number; description?: string }>({ label: '', weight: 1, description: '' })
-
-  async function addRequirement(e: React.FormEvent) {
-    e.preventDefault()
-    setSaving(true)
-    try {
-      const res = await fetch(`/api/stages/${stageId}/requirements`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label, weight, description }),
-      })
-      if (!res.ok) {
-        const j = await res.json(); alert(j?.error?.message || 'Erro ao adicionar requisito'); return
-      }
-      setLabel(''); setWeight(1); setDescription(''); onChanged()
-    } finally { setSaving(false) }
-  }
-
-  return (
-    <div className="space-y-3">
-      <form onSubmit={addRequirement} className="grid gap-2 sm:grid-cols-3">
-        <input value={label} onChange={(e)=>setLabel(e.target.value)} placeholder="Rótulo" className="border rounded px-3 py-2" required />
-        <input type="number" step="0.01" value={weight} onChange={(e)=>setWeight(Number(e.target.value))} placeholder="Peso" className="border rounded px-3 py-2" />
-        <input value={description} onChange={(e)=>setDescription(e.target.value)} placeholder="Descrição" className="border rounded px-3 py-2 sm:col-span-2" />
-        <button disabled={saving} className="bg-black text-white rounded px-3 py-2 sm:col-span-1">{saving? 'Salvando...' : 'Adicionar'}</button>
-      </form>
-      <ul className="list-disc pl-5 text-sm">
-        {requirements.map((r) => (
-          <li key={r.id} className="mb-2">
-            {editing === r.id ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <input value={editForm.label} onChange={(e)=>setEditForm((f)=>({ ...f, label: e.target.value }))} className="border rounded px-2 py-1" />
-                <input type="number" step="0.01" value={editForm.weight} onChange={(e)=>setEditForm((f)=>({ ...f, weight: Number(e.target.value) }))} className="border rounded px-2 py-1 w-24" />
-                <input value={editForm.description || ''} onChange={(e)=>setEditForm((f)=>({ ...f, description: e.target.value }))} className="border rounded px-2 py-1 flex-1" />
-                <button className="bg-black text-white rounded px-2 py-1" onClick={async()=>{
-                  const res = await fetch(`/api/requirements/${r.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editForm) })
-                  if (!res.ok) { const j = await res.json(); alert(j?.error?.message || 'Erro ao salvar'); return }
-                  setEditing(null); onChanged()
-                }}>Salvar</button>
-                <button className="border rounded px-2 py-1" onClick={()=> setEditing(null)}>Cancelar</button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span>{r.label} — peso {r.weight}</span>
-                <button className="text-blue-600 underline" onClick={()=>{ setEditing(r.id); setEditForm({ label: r.label, weight: r.weight, description: r.description }) }}>Editar</button>
-                <button className="text-red-600 underline" onClick={async()=>{ if(!confirm('Remover requisito?')) return; const res = await fetch(`/api/requirements/${r.id}`, { method: 'DELETE' }); if (!res.ok) { const j = await res.json(); alert(j?.error?.message || 'Erro ao remover'); return } onChanged() }}>Remover</button>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
 
 function RunPoller({ runId, stageId, applicationStageId, onFinished }: { runId: string; stageId: string; applicationStageId: string; onFinished: (runId: string) => void }) {
   const [status, setStatus] = useState<'pending'|'running'|'succeeded'|'failed'>('running')
+  const [lastScore, setLastScore] = useState<number | null>(null)
   useEffect(() => {
     let timer: any
     async function tick() {
       try {
+        console.log(`[DEBUG] RunPoller fazendo polling para runId: ${runId}`)
         const r = await fetch(`/api/ai/runs/${runId}`)
         const j = await r.json()
+        console.log(`[DEBUG] RunPoller resposta:`, j)
         if (j.status === 'succeeded') {
+          console.log(`[DEBUG] RunPoller análise concluída, chamando onFinished`)
           setStatus('succeeded')
+          const scoreValue = typeof j.result?.score === 'number' ? Number(j.result.score) : null
+          setLastScore(scoreValue)
           await fetch(`/api/stages/${stageId}/scores/auto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -692,30 +854,51 @@ function RunPoller({ runId, stageId, applicationStageId, onFinished }: { runId: 
           onFinished(runId)
           return
         }
-        if (j.status === 'failed') { setStatus('failed'); return }
-      } catch {}
+        if (j.status === 'failed') { 
+          console.log(`[DEBUG] RunPoller análise falhou`)
+          setStatus('failed'); 
+          return 
+        }
+      } catch (error) {
+        console.error(`[DEBUG] RunPoller erro:`, error)
+      }
       timer = setTimeout(tick, 2000)
     }
     tick()
     return () => timer && clearTimeout(timer)
   }, [runId, stageId, applicationStageId, onFinished])
-  return <div className="text-sm text-gray-600">Status da IA: {status}</div>
+  return (
+    <div className="text-sm text-gray-600 flex items-center gap-2">
+      <span>Status da IA: {status}</span>
+      {lastScore !== null && <span className="text-gray-500">| Score: {lastScore.toFixed(1)}</span>}
+    </div>
+  )
 }
 
 
 function Panel({ jobId }: { jobId: string | null }) {
   const [data, setData] = useState<any | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   
   const refreshData = async () => {
     if (!jobId) return
     setRefreshing(true)
     try {
       const response = await fetch(`/api/jobs/${jobId}/panel`)
+      if (!response.ok) {
+        const result = await response.json().catch(() => null)
+        setError(result?.error?.message || 'Erro ao carregar painel')
+        setData(null)
+        return
+      }
       const result = await response.json()
-      setData(result)
+      setData(result || { stages: [], items: [] })
+      setError(null)
     } catch (error) {
       console.error('Erro ao carregar painel:', error)
+      setError('Falha ao carregar painel de candidatos')
+      setData(null)
     } finally {
       setRefreshing(false)
     }
@@ -726,7 +909,16 @@ function Panel({ jobId }: { jobId: string | null }) {
   }, [jobId])
 
   if (!jobId) return null
-  if (!data) return <div className="text-sm text-gray-600">Carregando...</div>
+  if (!data) {
+    if (error) {
+      return (
+        <div className="card p-6 text-sm text-red-600">
+          {error}
+        </div>
+      )
+    }
+    return <div className="text-sm text-gray-600">Carregando...</div>
+  }
   
   return (
     <div className="space-y-4">

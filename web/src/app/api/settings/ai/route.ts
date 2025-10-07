@@ -57,17 +57,18 @@ export async function POST(req: NextRequest) {
     // Criptografar a API key (em produção, usar uma biblioteca de criptografia adequada)
     const encryptedApiKey = Buffer.from(openai_api_key).toString('base64')
 
-    // Salvar ou atualizar configurações
+    const upsertPayload = {
+      user_id: user.id,
+      openai_api_key: encryptedApiKey,
+      model,
+      temperature,
+      max_tokens,
+      updated_at: new Date().toISOString()
+    }
+
     const { error } = await supabase
       .from('ai_settings')
-      .upsert({
-        user_id: user.id,
-        openai_api_key: encryptedApiKey,
-        model,
-        temperature,
-        max_tokens,
-        updated_at: new Date().toISOString()
-      })
+      .upsert(upsertPayload, { onConflict: 'user_id' })
 
     if (error) {
       return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })

@@ -7,16 +7,25 @@ type Params = { params: Promise<{ id: string }> }
 export async function GET(_: NextRequest, { params }: Params) {
   const { id: jobId } = await params
   const supabase = getSupabaseAdmin()
-  const user = await requireUser()
+  let user
+  try {
+    user = await requireUser()
+  } catch (error) {
+    return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
+  }
 
   const { data: job, error: jobError } = await supabase
     .from('jobs')
-    .select('id, company_id')
+    .select('id, company_id, created_by')
     .eq('id', jobId)
     .maybeSingle()
 
-  if (jobError || !job || job.company_id !== user.company_id) {
-    return Response.json({ error: { code: 'forbidden', message: 'Vaga não encontrada' } }, { status: 404 })
+  if (jobError || !job) {
+    return Response.json({ error: { code: 'not_found', message: 'Vaga não encontrada' } }, { status: 404 })
+  }
+
+  if (job.company_id !== user.company_id || job.created_by !== user.id) {
+    return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga solicitada' } }, { status: 403 })
   }
 
   const { data: apps, error } = await supabase
@@ -31,12 +40,18 @@ export async function GET(_: NextRequest, { params }: Params) {
   const candidateIds = [...new Set(apps.map((a) => a.candidate_id))]
   const { data: candidates, error: candErr } = await supabase
     .from('candidates')
-    .select('id, name, email, phone')
+    .select('id, name, email, phone, company_id, created_by')
     .in('id', candidateIds)
   if (candErr) return Response.json({ error: { code: 'db_error', message: candErr.message } }, { status: 500 })
 
-  const candidateById = new Map((candidates ?? []).map((c) => [c.id, c]))
-  const items = apps.map((a) => ({ ...a, candidate: candidateById.get(a.candidate_id) || null }))
+  const candidateById = new Map(
+    (candidates ?? [])
+      .filter((c) => c.created_by === user.id && c.company_id === user.company_id)
+      .map((c) => [c.id, c])
+  )
+  const items = apps
+    .filter((a) => candidateById.has(a.candidate_id))
+    .map((a) => ({ ...a, candidate: candidateById.get(a.candidate_id) || null }))
   return Response.json({ items })
 }
 
@@ -48,16 +63,25 @@ export async function POST(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'validation_error', message: 'candidate_id é obrigatório' } }, { status: 400 })
   }
   const supabase = getSupabaseAdmin()
-  const user = await requireUser()
+  let user
+  try {
+    user = await requireUser()
+  } catch (error) {
+    return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
+  }
 
   const { data: job, error: jobError } = await supabase
     .from('jobs')
-    .select('company_id')
+    .select('company_id, created_by')
     .eq('id', jobId)
     .maybeSingle()
 
-  if (jobError || !job || job.company_id !== user.company_id) {
-    return Response.json({ error: { code: 'forbidden', message: 'Vaga não encontrada' } }, { status: 404 })
+  if (jobError || !job) {
+    return Response.json({ error: { code: 'not_found', message: 'Vaga não encontrada' } }, { status: 404 })
+  }
+
+  if (job.company_id !== user.company_id || job.created_by !== user.id) {
+    return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga solicitada' } }, { status: 403 })
   }
 
   const { data, error } = await supabase

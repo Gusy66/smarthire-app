@@ -6,18 +6,42 @@ type Params = { params: Promise<{ stageId: string }> }
 
 // Dispara IA para avaliar candidato numa etapa
 export async function POST(req: NextRequest, { params }: Params) {
+  console.log('[DEBUG API] Iniciando avaliação...')
   const { stageId } = await params
+  console.log('[DEBUG API] stageId:', stageId)
+  
   const body = await req.json()
-  const { application_id, resume_path, audio_path, transcript_path } = body || {}
-  if (!application_id) return Response.json({ error: { code: 'validation_error', message: 'application_id é obrigatório' } }, { status: 400 })
+  console.log('[DEBUG API] Body recebido:', body)
+  
+  const {
+    application_id,
+    resume_path,
+    resume_bucket,
+    resume_signed_url,
+    audio_path,
+    audio_bucket,
+    audio_signed_url,
+    transcript_path,
+    transcript_bucket,
+    transcript_signed_url,
+  } = body || {}
+  
+  if (!application_id) {
+    console.log('[DEBUG API] application_id não fornecido')
+    return Response.json({ error: { code: 'validation_error', message: 'application_id é obrigatório' } }, { status: 400 })
+  }
 
+  console.log('[DEBUG API] Obtendo Supabase admin...')
   const supabase = getSupabaseAdmin()
+  
+  console.log('[DEBUG API] Verificando usuário...')
   const user = await requireUser()
+  console.log('[DEBUG API] Usuário:', user?.id)
   
   // Garante application_stage
   const { data: stage } = await supabase
     .from('job_stages')
-    .select('id, name, threshold, stage_weight, jobs(description)')
+    .select('id, name, threshold, stage_weight, description, jobs(description)')
     .eq('id', stageId)
     .single()
   const { data: appStageExisting } = await supabase
@@ -34,12 +58,8 @@ export async function POST(req: NextRequest, { params }: Params) {
         .select('id')
         .single()).data!.id
 
-  // Carrega requisitos da etapa
-  const { data: requirements } = await supabase
-    .from('stage_requirements')
-    .select('label, description, weight')
-    .eq('stage_id', stageId)
-    .order('created_at', { ascending: true })
+  // Não carrega mais requisitos específicos - usa apenas a descrição da etapa
+  const requirements: any[] = []
 
   // Descobre template vinculado ou padrão do usuário
   const { data: stageTemplate } = await supabase
@@ -65,14 +85,21 @@ export async function POST(req: NextRequest, { params }: Params) {
     stage_id: stageId,
     application_id,
     resume_path,
+    resume_bucket,
+    resume_signed_url,
     audio_path,
+    audio_bucket,
+    audio_signed_url,
     transcript_path,
+    transcript_bucket,
+    transcript_signed_url,
     user_id: user.id,
     stage: {
       id: stage?.id,
       name: stage?.name,
       threshold: stage?.threshold,
       stage_weight: stage?.stage_weight,
+      description: stage?.description ?? null,
       job_description: stage?.jobs?.description ?? null,
     },
     requirements: requirements ?? [],
@@ -80,35 +107,52 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 
   // Dispara avaliação completa na IA
-  const aiRes = await fetch(`${process.env.NEXT_PUBLIC_AI_BASE_URL || 'http://localhost:8000'}/v1/evaluate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  console.log('Enviando payload para IA:', JSON.stringify(payload, null, 2))
   
-  if (!aiRes.ok) {
-    console.error('AI service error:', await aiRes.text())
+  try {
+    const aiUrl = `${process.env.NEXT_PUBLIC_AI_BASE_URL || 'http://127.0.0.1:8000'}/v1/evaluate`
+    console.log('[DEBUG API] URL da IA:', aiUrl)
+    
+    const aiRes = await fetch(aiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    
+    console.log('[DEBUG API] Status da resposta da IA:', aiRes.status)
+    
+    if (!aiRes.ok) {
+      const errorText = await aiRes.text()
+      console.error('[DEBUG API] AI service error:', errorText)
+      return Response.json({ error: { code: 'ai_error', message: 'Erro ao conectar com serviço de IA' } }, { status: 500 })
+    }
+    
+    const aiJson = await aiRes.json()
+    console.log('[DEBUG API] Resposta da IA:', aiJson)
+    
+    const runId = aiJson?.id || 'evaluate-run'
+    
+    // Registra o run na base
+    await supabase
+      .from('stage_ai_runs')
+      .insert({ 
+        application_stage_id: applicationStageId, 
+        stage_id: stageId,
+        type: 'evaluate', 
+        status: 'running',
+        run_id: runId
+      })
+    
+    return Response.json({ 
+      application_stage_id: applicationStageId, 
+      run_id: runId, 
+      status: 'running' 
+    })
+    
+  } catch (error) {
+    console.error('[DEBUG API] Erro na requisição para IA:', error)
     return Response.json({ error: { code: 'ai_error', message: 'Erro ao conectar com serviço de IA' } }, { status: 500 })
   }
-  
-  const aiJson = await aiRes.json()
-  const runId = aiJson?.id || 'evaluate-run'
-
-  // Registra o run na base
-  await supabase
-    .from('stage_ai_runs')
-    .insert({ 
-      application_stage_id: applicationStageId, 
-      type: 'evaluate', 
-      status: 'running',
-      run_id: runId
-    })
-
-  return Response.json({ 
-    application_stage_id: applicationStageId, 
-    run_id: runId, 
-    status: 'running' 
-  })
 }
 
 

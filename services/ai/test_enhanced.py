@@ -6,6 +6,8 @@ Script para testar o serviço de IA melhorado
 import asyncio
 import httpx
 import json
+import tempfile
+from pathlib import Path
 
 async def test_enhanced_ai():
     base_url = "http://localhost:8000"
@@ -39,10 +41,14 @@ async def test_enhanced_ai():
     
     # Teste 3: Análise de candidato
     print("\n3. Testando análise de candidato...")
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as tmp:
+        tmp.write("João Silva\nExperiência: 6 anos em vendas B2B\nFerramentas: Salesforce, Hubspot\nIdiomas: Inglês avançado\n")
+        resume_path = tmp.name
+
     evaluation_request = {
         "stage_id": "test-stage-123",
         "application_id": "test-app-456",
-        "resume_path": "test-resume.pdf",
+        "resume_path": resume_path,
         "user_id": "test-user-789"
     }
     
@@ -81,8 +87,13 @@ async def test_enhanced_ai():
             print(f"   📝 Análise: {result['analysis'][:100]}...")
             print(f"   ✅ Requisitos atendidos: {len(result['matched_requirements'])}")
             print(f"   ❌ Requisitos não atendidos: {len(result['missing_requirements'])}")
+            if result.get('extraction_warnings'):
+                print(f"   ⚠️ Avisos: {result['extraction_warnings']}")
         else:
             print(f"   ❌ Análise falhou: {run_status.get('error', 'Erro desconhecido')}")
+
+    # Limpa arquivo temporário
+    Path(resume_path).unlink(missing_ok=True)
 
 if __name__ == "__main__":
     asyncio.run(test_enhanced_ai())

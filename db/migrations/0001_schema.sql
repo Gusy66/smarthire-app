@@ -25,7 +25,8 @@ create table if not exists jobs (
   description text,
   location text,
   status text check (status in ('open','closed')) not null default 'open',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  created_by uuid references users(id)
 );
 
 create table if not exists candidates (
@@ -34,7 +35,8 @@ create table if not exists candidates (
   name text not null,
   email text,
   phone text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  created_by uuid references users(id)
 );
 
 create table if not exists applications (

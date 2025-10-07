@@ -1,11 +1,13 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../_lib/supabaseAdmin'
-import { getUserIdFromCookie } from '../_lib/auth'
+import { requireUser } from '../_lib/auth'
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseAdmin()
-  const userId = await getUserIdFromCookie()
-  if (!userId) {
+  let user
+  try {
+    user = await requireUser()
+  } catch (error) {
     return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
   }
 
@@ -17,7 +19,7 @@ export async function GET(req: NextRequest) {
   const to = from + pageSize - 1
 
   let query = supabase.from('jobs').select('*', { count: 'exact' })
-    .eq('created_by', userId)
+    .eq('company_id', user.company_id)
   if (search) {
     const term = `%${search}%`
     query = query.or(
@@ -37,33 +39,18 @@ export async function POST(req: NextRequest) {
   if (!title) return Response.json({ error: { code: 'validation_error', message: 'title is required' } }, { status: 400 })
   // For MVP, attach to a default company. In production, derive from auth/session.
   const supabase = getSupabaseAdmin()
-  const createdBy = await getUserIdFromCookie()
-  if (!createdBy) {
+  let user
+  try {
+    user = await requireUser()
+  } catch (error) {
     return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
   }
   // Get or create default company "Dev Co"
-  let companyId: string | null = null
-  {
-    const { data: company } = await supabase
-      .from('companies')
-      .select('id')
-      .eq('name', 'Dev Co')
-      .maybeSingle()
-    if (company?.id) companyId = company.id
-    else {
-      const { data: inserted, error: insertError } = await supabase
-        .from('companies')
-        .insert({ name: 'Dev Co' })
-        .select('id')
-        .single()
-      if (insertError) return Response.json({ error: { code: 'db_error', message: insertError.message } }, { status: 500 })
-      companyId = inserted.id
-    }
-  }
+  const companyId = user.company_id
 
   const { data, error } = await supabase
     .from('jobs')
-    .insert({ title, description, location, status, company_id: companyId, created_by: createdBy })
+    .insert({ title, description, location, status, company_id: companyId, created_by: user.id })
     .select('id')
     .single()
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })

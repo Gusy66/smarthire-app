@@ -4,13 +4,15 @@ import { getSupabaseAdmin } from '../../_lib/supabaseAdmin'
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
+    console.log('[DEBUG] Upload resume request body:', body)
     const { filename = 'resume.pdf', content_type = 'application/pdf' } = body || {}
+    console.log('[DEBUG] Upload resume params:', { filename, content_type })
     const supabase = getSupabaseAdmin()
     const bucket = 'resumes'
     const sanitized = sanitizeFilename(filename)
     const path = `${Date.now()}-${sanitized}`
     
-    console.log('Creating signed URL for:', { bucket, path, content_type })
+    console.log('[DEBUG] Creating signed upload URL for:', { bucket, path, contentType: content_type })
     
     const { data, error } = await supabase.storage
       .from(bucket)
@@ -18,6 +20,8 @@ export async function POST(req: NextRequest) {
         contentType: content_type,
         upsert: false // Não sobrescrever arquivos existentes
       })
+    
+    console.log('[DEBUG] Supabase storage response:', { data, error })
     
     if (error) {
       console.error('Supabase storage error:', error)
@@ -38,11 +42,16 @@ export async function POST(req: NextRequest) {
         } 
       }, { status: 500 })
     }
-    
-    console.log('Signed URL created successfully')
-    return Response.json({ 
-      upload_url: data.signedUrl, 
-      path: `${bucket}/${path}` 
+
+    const { data: downloadSignedUrl } = await supabase.storage
+      .from(bucket)
+      .createSignedUrl(path, 60 * 30)
+
+    return Response.json({
+      upload_url: data.signedUrl,
+      path: `${bucket}/${path}`,
+      bucket,
+      view_url: downloadSignedUrl?.signedUrl ?? null,
     })
   } catch (error) {
     console.error('Upload endpoint error:', error)

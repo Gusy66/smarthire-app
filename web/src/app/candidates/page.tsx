@@ -18,7 +18,9 @@ export default function CandidatesPage() {
   async function load() {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
     if (search) params.set('search', search)
-    const res = await fetch(`/api/candidates?${params}`)
+    const res = await fetch(`/api/candidates?${params}`, {
+      credentials: 'same-origin',
+    })
     const json = await res.json()
     setCandidates(json.items || [])
     setTotal(json.total || 0)
@@ -36,12 +38,22 @@ export default function CandidatesPage() {
       const res = await fetch('/api/candidates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify(form),
       })
-      if (!res.ok) { const j = await res.json(); notify.notify({ title: 'Erro ao criar candidato', description: j?.error?.message, variant: 'error' }); return }
+      if (!res.ok) {
+        const text = await res.text()
+        let message = res.statusText || 'Erro ao criar candidato'
+        try {
+          const payload = text ? JSON.parse(text) : null
+          message = payload?.error?.message || message
+        } catch {}
+        notify({ title: 'Erro ao criar candidato', description: message, variant: 'error' })
+        return
+      }
       setForm({ name: '', email: '', phone: '' })
       await load()
-      notify.notify({ title: 'Candidato criado', variant: 'success' })
+      notify({ title: 'Candidato criado', variant: 'success' })
     } finally {
       setLoading(false)
     }

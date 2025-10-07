@@ -11,7 +11,12 @@ export async function POST(req: NextRequest) {
     .from(bucket)
     .createSignedUploadUrl(path, { contentType: content_type })
   if (error || !data) return Response.json({ error: { code: 'storage_error', message: error?.message || 'storage error' } }, { status: 500 })
-  return Response.json({ upload_url: data.signedUrl, path: `${bucket}/${path}` })
+
+  const { data: downloadSignedUrl } = await supabase.storage
+    .from(bucket)
+    .createSignedUrl(path, 60 * 30)
+
+  return Response.json({ upload_url: data.signedUrl, path: `${bucket}/${path}`, bucket, view_url: downloadSignedUrl?.signedUrl ?? null })
 }
 
 

@@ -8,7 +8,8 @@ export async function POST(req: NextRequest) {
     payload = await req.json()
     const { event, session } = payload
 
-    if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || (event === 'INITIAL_SESSION' && session?.access_token)) {
+    const shouldSetToken = ['SIGNED_IN', 'INITIAL_SESSION', 'TOKEN_REFRESHED', 'REFRESH_TOKEN_UPDATED', 'RECOVERED', 'PASSWORD_RECOVERY'].includes(event)
+    if (shouldSetToken) {
       const accessToken = session?.access_token
       if (!accessToken) {
         return Response.json({ error: { code: 'invalid_session', message: 'Sessão inválida' } }, { status: 400 })

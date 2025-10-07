@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "db:migrate": "supabase db push",
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
@@ -10,6 +11,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
+    "dotenv": "^17.2.3",
     "next": "^15.5.2",
     "react": "19.1.0",
     "react-dom": "19.1.0"
