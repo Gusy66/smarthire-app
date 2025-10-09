@@ -14,126 +14,20 @@ import tempfile
 from urllib.parse import urlparse
 import base64
 import os
-from dotenv import load_dotenv, dotenv_values
-# Carregamento seguro de variáveis de ambiente
-def load_environment_variables():
-    """
-    Carrega variáveis de ambiente de forma segura, tratando problemas de encoding
-    """
-    try:
-        # Verificar se arquivo .env existe
-        env_file = Path(".env")
-        if env_file.exists():
-            print(f"[IA] Arquivo .env encontrado: {env_file.absolute()}")
-            try:
-                # Tentar diferentes encodings (inclui UTF-16/UTF-32)
-                encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'utf-16', 'utf-16-le', 'utf-16-be', 'utf-32', 'utf-32-le', 'utf-32-be']
-                loaded = False
+from dotenv import load_dotenv
 
-                for encoding in encodings:
-                    try:
-                        result = load_dotenv(encoding=encoding)
-                        if result:
-                            print(f"[IA] ✅ .env carregado com sucesso usando encoding: {encoding}")
-                            loaded = True
-                            break
-                    except UnicodeDecodeError:
-                        print(f"[IA] ❌ Falha com encoding {encoding}, tentando próximo...")
-                        continue
-                    except Exception as e:
-                        print(f"[IA] ❌ Erro com encoding {encoding}: {e}")
-                        break
-
-                if not loaded:
-                    print(f"[IA] ❌ Não foi possível carregar .env com nenhum encoding")
-                    print(f"[IA] 🔄 Tentando carregar manualmente...")
-
-                    # Tentar carregar manualmente com diferentes encodings e via dotenv_values
-                    manual_loaded = False
-
-                    # 1) dotenv_values
-                    try:
-                        values = dotenv_values(dotenv_path=str(env_file))
-                        if values:
-                            for k, v in values.items():
-                                if k and v is not None and os.getenv(k) is None:
-                                    os.environ[k] = str(v)
-                            manual_loaded = True
-                            print(f"[IA] ✅ .env carregado via dotenv_values")
-                    except Exception as e:
-                        print(f"[IA] ❌ dotenv_values falhou: {e}")
-
-                    # 2) Parsing manual
-                    if not manual_loaded:
-                        for encoding in encodings:
-                            try:
-                                with open('.env', 'r', encoding=encoding) as f:
-                                    content = f.read()
-                                    # Remover BOM se houver
-                                    if content.startswith('\ufeff'):
-                                        content = content.lstrip('\ufeff')
-                                    for raw_line in content.split('\n'):
-                                        line = raw_line.strip()
-                                        if not line or line.startswith('#'):
-                                            continue
-                                        if '=' not in line:
-                                            continue
-                                        key, value = line.split('=', 1)
-                                        key = key.strip()
-                                        value = value.strip().strip('"\'')
-                                        if key and os.getenv(key) is None:
-                                            os.environ[key] = value
-                                    manual_loaded = True
-                                    print(f"[IA] ✅ .env carregado manualmente com encoding: {encoding}")
-                                    break
-                            except UnicodeDecodeError:
-                                print(f"[IA] ❌ Falha no carregamento manual com {encoding}: UnicodeDecodeError")
-                                continue
-                            except Exception as e:
-                                print(f"[IA] ❌ Falha no carregamento manual com {encoding}: {e}")
-                                continue
-
-                    if not manual_loaded:
-                        print(f"[IA] ❌ Não foi possível carregar .env manualmente")
-                        print(f"[IA] ⚠️ Continuando sem carregar .env")
-                        return False
-
-                return True
-
-            except ImportError:
-                print(f"[IA] ❌ python-dotenv não instalado")
-                print(f"[IA] ⚠️ Continuando sem carregar .env")
-                return False
-            except Exception as e:
-                print(f"[IA] ❌ Erro ao carregar .env: {e}")
-                print(f"[IA] ⚠️ Continuando sem carregar .env")
-                return False
-        else:
-            print(f"[IA] Arquivo .env não encontrado em: {env_file.absolute()}")
-            print(f"[IA] ⚠️ Usando apenas variáveis de ambiente do sistema")
-            return False
-    except Exception as e:
-        print(f"[IA] ❌ Erro crítico no carregamento de variáveis: {e}")
-        return False
-
-print("[IA] ========== INICIANDO CARREGAMENTO DE VARIÁVEIS ==========")
-env_loaded = load_environment_variables()
+print("[IA] Carregando variáveis de ambiente...")
+result = load_dotenv()
+print(f"[IA] Resultado do load_dotenv(): {result}")
 
 # Verificar se as variáveis foram carregadas
 supabase_url = os.getenv("SUPABASE_URL")
 service_role = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 storage_url = os.getenv("SUPABASE_STORAGE_URL")
 
-print(f"[IA] ========== STATUS DAS VARIÁVEIS ==========")
 print(f"[IA] SUPABASE_URL carregada: {bool(supabase_url)}")
 print(f"[IA] SUPABASE_SERVICE_ROLE_KEY carregada: {bool(service_role)}")
 print(f"[IA] SUPABASE_STORAGE_URL carregada: {bool(storage_url)}")
-
-# Verificar variáveis críticas
-if not supabase_url:
-    print(f"[IA] ❌ SUPABASE_URL não configurada - verifique seu arquivo .env ou variáveis de ambiente")
-if not service_role:
-    print(f"[IA] ❌ SUPABASE_SERVICE_ROLE_KEY não configurada - verifique seu arquivo .env ou variáveis de ambiente")
 
 try:
     from PyPDF2 import PdfReader  # type: ignore
@@ -414,7 +308,7 @@ async def analyze_candidate_with_openai(
             ])
             
             base_prompt = prompt_template or """
-Analise o candidato para a vaga baseado EXCLUSIVAMENTE nas informações fornecidas.
+Analise o candidato para a vaga baseado nas informações fornecidas.
 
 DESCRIÇÃO DA ETAPA:
 {{STAGE_DESCRIPTION}}
@@ -422,140 +316,130 @@ DESCRIÇÃO DA ETAPA:
 REQUISITOS DA ETAPA:
 {{REQUIREMENTS_LIST}}
 
-INFORMAÇÕES DO CANDIDATO (CURRÍCULO REAL):
+INFORMAÇÕES DO CANDIDATO:
 {{CANDIDATE_INFO}}
 
-INSTRUÇÕES CRÍTICAS - LEIA ATENTAMENTE:
-1. USE APENAS as informações reais fornecidas no campo "INFORMAÇÕES DO CANDIDATO"
-2. NÃO INVENTE nenhum dado fictício, nome, empresa ou experiência
-3. Se o currículo estiver vazio, mencione explicitamente "CURRÍCULO VAZIO"
-4. Baseie-se EXCLUSIVAMENTE no texto real do currículo fornecido
-5. Se não houver informações específicas, mencione "INFORMAÇÃO NÃO DISPONÍVEL NO CURRÍCULO"
+INSTRUÇÕES CRÍTICAS:
+1. USE APENAS as informações reais do candidato fornecidas acima
+2. NÃO invente dados fictícios como "João Silva" ou empresas genéricas
+3. Se o currículo estiver vazio ou incompleto, mencione isso na análise
+4. Baseie-se EXCLUSIVAMENTE no conteúdo real do currículo do candidato
 
-FORMATO DE RESPOSTA OBRIGATÓRIO:
-- Responda APENAS com JSON válido em um dos formatos permitidos:
-  A) Formato novo (campos na raiz):
-     {"score": number, "analysis": string, "strengths": string[], "weaknesses": string[], "matched_requirements": string[], "missing_requirements": string[]}
-  B) Formato antigo (com "avaliacao"):
-     {"avaliacao": {"pontuacao": number, "justificativa": string, "pontos_fortes": string[], "pontos_que_deixam_a_desejar": string[], "requisitos_atendidos": string[], "requisitos_nao_atendidos": string[]}}
-- É ESTRITAMENTE PROIBIDO incluir quaisquer outros campos além dos acima. NÃO inclua campos como "candidato", "nome" ou qualquer campo adicional.
+Forneça uma análise detalhada em JSON válido com a seguinte estrutura:
 
-REGRAS OBRIGATÓRIAS:
-- Se não encontrar experiências específicas no currículo, liste "Nenhuma experiência específica identificada no currículo"
-- Se não encontrar formação, liste "Formação acadêmica não mencionada no currículo"
-- Se não encontrar habilidades, liste "Habilidades não detalhadas no currículo"
-- Para requisitos: compare exatamente com o que está escrito no currículo fornecido
-- Se o currículo estiver vazio, retorne pontuação 0 e mencione explicitamente
+{
+  "avaliacao": {
+    "pontuacao": pontuação de 0 a 10 (float),
+    "justificativa": resumo textual detalhado da análise do candidato REAL,
+    "pontos_fortes": array de strings com pontos fortes específicos baseados no currículo REAL,
+    "pontos_que_deixam_a_desejar": array de strings com pontos de melhoria específicos baseados no currículo REAL,
+    "requisitos_atendidos": array de strings com requisitos atendidos pelo candidato REAL,
+    "requisitos_nao_atendidos": array de strings com requisitos não atendidos pelo candidato REAL
+  }
+}
 
-ORIENTAÇÕES IMPORTANTES:
-- Analise LINHA POR LINHA o conteúdo do currículo
-- Seja específico sobre o que FOI ENCONTRADO vs NÃO FOI ENCONTRADO
-- Não generalize - use apenas o que está escrito no texto fornecido
+IMPORTANTE: 
+- Use APENAS dados reais do candidato fornecido
+- Se não houver informações suficientes, mencione isso na justificativa
+- Seja específico e baseie-se na descrição da etapa e nas informações REAIS do candidato
+
+INSTRUÇÕES DETALHADAS:
+
+1. ANÁLISE ESPECÍFICA DO CURRÍCULO:
+   - Leia cuidadosamente o currículo do candidato
+   - Identifique experiências, habilidades e competências mencionadas
+   - Compare com os requisitos da etapa
+   - Seja específico sobre o que foi encontrado ou não encontrado
+
+2. MATCHED_REQUIREMENTS (Requisitos Atendidos):
+   - Liste especificamente quais requisitos foram atendidos
+   - Exemplo: "Demonstra experiência sólida em React com projetos em produção"
+   - Exemplo: "Possui conhecimento avançado em Python com frameworks Django"
+   - Exemplo: "Experiência comprovada em liderança de equipes de desenvolvimento"
+   - NÃO use textos genéricos como "experiência relevante"
+
+3. MISSING_REQUIREMENTS (Requisitos Não Atendidos):
+   - Liste especificamente quais requisitos não foram atendidos
+   - Exemplo: "Falta experiência específica em Docker e containerização"
+   - Exemplo: "Não demonstra conhecimento em AWS ou cloud computing"
+   - Exemplo: "Ausência de experiência com metodologias ágeis (Scrum/Kanban)"
+   - Seja específico sobre o que falta, não genérico
+
+4. STRENGTHS (Pontos Fortes):
+   - Identifique pontos fortes específicos do candidato
+   - Exemplo: "Experiência sólida em React com componentes reutilizáveis"
+   - Exemplo: "Conhecimento avançado em Python com frameworks Django"
+   - Exemplo: "Liderança de equipes de desenvolvimento com resultados comprovados"
+   - Baseie-se no conteúdo real do currículo
+
+5. WEAKNESSES (Pontos de Melhoria):
+   - Identifique pontos de melhoria específicos do candidato
+   - Exemplo: "Falta de experiência em tecnologias de cloud (AWS/Azure)"
+   - Exemplo: "Não demonstra conhecimento em metodologias ágeis"
+   - Exemplo: "Experiência limitada em bancos de dados NoSQL"
+   - Seja específico sobre o que precisa melhorar
+
+6. FORMATAÇÃO:
+   - TODOS os campos de lista devem ser arrays de strings simples
+   - Cada item deve ser uma análise específica e detalhada
+   - Evite respostas genéricas ou vagas
+   - Baseie-se no conteúdo real do currículo fornecido
+- Formato correto: ["string1", "string2", "string3"]
+- Formato incorreto: [{"requirement": "string1"}, {"requirement": "string2"}]
 """
 
-            prompt = (
-                base_prompt
-                .replace("{{STAGE_DESCRIPTION}}", stage_description)
-                .replace("{{REQUIREMENTS_LIST}}", requirements_text)
-                .replace("{{CANDIDATE_INFO}}", text_content)
-            )
+    prompt = (
+                         base_prompt
+                         .replace("{{STAGE_DESCRIPTION}}", stage_description)
+                         .replace("{{REQUIREMENTS_LIST}}", requirements_text)
+                         .replace("{{CANDIDATE_INFO}}", text_content)
+                     )
 
-            print(f"[IA] ========== PROMPT FINAL PARA OPENAI ==========")
-            print(f"[IA] Prompt preparado: {len(prompt)} caracteres")
-            # Evitar imprimir o prompt completo em produção
-            # print(f"[IA] {prompt}")
-            print(f"[IA] ========== FIM DO PROMPT ==========")
-            print(f"[IA] Fazendo requisição para OpenAI...")
-
-            # Monta payload com JSON Schema único (sem oneOf)
-            payload = {
-                "model": config.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Você é um especialista em RH que analisa candidatos de forma objetiva e justa. Sempre responda em formato JSON válido."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": config.temperature,
-                "max_tokens": config.max_tokens,
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "evaluation_schema",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "properties": {
-                                "score": {"type": "number", "minimum": 0, "maximum": 10},
-                                "analysis": {"type": "string"},
-                                "strengths": {"type": "array", "items": {"type": "string"}},
-                                "weaknesses": {"type": "array", "items": {"type": "string"}},
-                                "matched_requirements": {"type": "array", "items": {"type": "string"}},
-                                "missing_requirements": {"type": "array", "items": {"type": "string"}}
-                            },
-                            "required": [
-                                "score",
-                                "analysis",
-                                "strengths",
-                                "weaknesses",
-                                "matched_requirements",
-                                "missing_requirements"
-                            ]
-                        },
-                        "strict": True
-                    }
-                }
-            }
-
+                     print(f"[IA] ========== PROMPT FINAL PARA OPENAI ==========")
+                     print(f"[IA] Prompt preparado: {len(prompt)} caracteres")
+                     print(f"[IA] ========== PROMPT COMPLETO ==========")
+                     print(f"[IA] {prompt}")
+                     print(f"[IA] ========== FIM DO PROMPT ==========")
+                     print(f"[IA] Fazendo requisição para OpenAI...")
+            
             response = await client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {config.openai_api_key}",
                     "Content-Type": "application/json"
                 },
-                json=payload,
+                json={
+                    "model": config.model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "Você é um especialista em RH que analisa candidatos de forma objetiva e justa. Sempre responda em formato JSON válido."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    "temperature": config.temperature,
+                    "max_tokens": config.max_tokens
+                },
                 timeout=30.0
             )
 
-            print(f"[IA] Resposta OpenAI recebida: {response.status_code}")
+                     print(f"[IA] Resposta OpenAI recebida: {response.status_code}")
 
-            # Fallback automático se o schema for rejeitado (400)
-            if response.status_code == 400:
-                try:
-                    err = response.json()
-                    err_msg = (err.get("error", {}) or {}).get("message", "")
-                except Exception:
-                    err_msg = ""
-                if "response_format" in err_msg and ("Invalid schema" in err_msg or "not permitted" in err_msg):
-                    print("[IA] Aviso: Schema JSON rejeitado. Requisitando novamente com response_format=json_object...")
-                    payload["response_format"] = {"type": "json_object"}
-                    response = await client.post(
-                        "https://api.openai.com/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {config.openai_api_key}",
-                            "Content-Type": "application/json"
-                        },
-                        json=payload,
-                        timeout=30.0
-                    )
-                    print(f"[IA] Resposta OpenAI (fallback json_object): {response.status_code}")
+                     if response.status_code != 200:
+                         print(f"[IA] Erro na API OpenAI: {response.status_code} - {response.text}")
+                         raise Exception(f"Erro na API OpenAI: {response.status_code} - {response.text}")
 
-            if response.status_code != 200:
-                print(f"[IA] Erro na API OpenAI: {response.status_code} - {response.text}")
-                raise Exception(f"Erro na API OpenAI: {response.status_code} - {response.text}")
-
-            data = response.json()
-            content = data["choices"][0]["message"]["content"]
-            print(f"[IA] ========== RESPOSTA DA OPENAI ==========")
-            print(f"[IA] Conteúdo da resposta: {len(content)} caracteres")
-            # Evitar imprimir a resposta completa
-            # print(f"[IA] {content}")
-            print(f"[IA] ========== FIM DA RESPOSTA ==========")
-
+                     data = response.json()
+                     content = data["choices"][0]["message"]["content"]
+                     print(f"[IA] ========== RESPOSTA DA OPENAI ==========")
+                     print(f"[IA] Conteúdo da resposta: {len(content)} caracteres")
+                     print(f"[IA] ========== CONTEÚDO COMPLETO DA RESPOSTA ==========")
+                     print(f"[IA] {content}")
+                     print(f"[IA] ========== FIM DA RESPOSTA ==========")
+            
             # Extrair JSON da resposta
             try:
                 print(f"[IA] Tentando extrair JSON da resposta...")
@@ -605,8 +489,8 @@ ORIENTAÇÕES IMPORTANTES:
             # Verificar estrutura do JSON retornado pela OpenAI
             print(f"[IA] ========== ESTRUTURA DO JSON RECEBIDO ==========")
             print(f"[IA] Chaves no resultado: {list(result.keys())}")
-            # Evitar imprimir JSON completo
-            # print(f"[IA] {json.dumps(result, indent=2, ensure_ascii=False)}")
+            print(f"[IA] ========== CONTEÚDO COMPLETO DO JSON ==========")
+            print(f"[IA] {json.dumps(result, indent=2, ensure_ascii=False)}")
             print(f"[IA] ========== FIM DA ESTRUTURA ==========")
 
             # Formato atual da OpenAI (campos na raiz)
@@ -631,189 +515,163 @@ ORIENTAÇÕES IMPORTANTES:
                 missing_requirements = ensure_string_list(avaliacao.get("requisitos_nao_atendidos", []))
                 recommendations = []  # Removido - não será usado
 
-            # Clamp da pontuação [0,10]
-            try:
-                if score is None or not isinstance(score, (int, float)):
-                    score = 0.0
-                score = max(0.0, min(10.0, float(score)))
-            except Exception:
-                score = 0.0
+                     evaluation_result = EvaluationResult(
+                         score=score,
+                         analysis=analysis,
+                         matched_requirements=matched_requirements,
+                         missing_requirements=missing_requirements,
+                         strengths=strengths,
+                         weaknesses=weaknesses,
+                         recommendations=recommendations
+                     )
 
-            evaluation_result = EvaluationResult(
-                score=score,
-                analysis=analysis,
-                matched_requirements=matched_requirements,
-                missing_requirements=missing_requirements,
-                strengths=strengths,
-                weaknesses=weaknesses,
-                recommendations=recommendations
-            )
+                     print(f"[IA] ========== RESULTADO FINAL DA ANÁLISE ==========")
+                     print(f"[IA] Score: {evaluation_result.score}")
+                     print(f"[IA] Analysis: {evaluation_result.analysis}")
+                     print(f"[IA] Strengths: {evaluation_result.strengths}")
+                     print(f"[IA] Weaknesses: {evaluation_result.weaknesses}")
+                     print(f"[IA] Matched requirements: {evaluation_result.matched_requirements}")
+                     print(f"[IA] Missing requirements: {evaluation_result.missing_requirements}")
+                     print(f"[IA] ========== FIM DO RESULTADO ==========")
 
-            print(f"[IA] ========== RESULTADO FINAL DA ANÁLISE ==========")
-            print(f"[IA] Score: {evaluation_result.score}")
-            print(f"[IA] Analysis: {evaluation_result.analysis}")
-            print(f"[IA] Strengths: {evaluation_result.strengths}")
-            print(f"[IA] Weaknesses: {evaluation_result.weaknesses}")
-            print(f"[IA] Matched requirements: {evaluation_result.matched_requirements}")
-            print(f"[IA] Missing requirements: {evaluation_result.missing_requirements}")
-            print(f"[IA] ========== FIM DO RESULTADO ==========")
+                     print(f"[IA] DEBUG - JSON parseado completo:")
+                     print(f"[IA] {json.dumps(result, indent=2, ensure_ascii=False)}")
 
-            print(f"[IA] DEBUG - JSON parseado completo:")
-            print(f"[IA] {json.dumps(result, indent=2, ensure_ascii=False)}")
-
-            return evaluation_result
+                     return evaluation_result
 
     except Exception as e:
         print(f"Erro na análise com OpenAI: {e}")
         # Fallback para análise simulada
         return await analyze_candidate_simulated(text_content, stage_description, requirements)
 
-# Análise simulada (fallback) - MELHORADA PARA USAR DADOS REAIS
+# Análise simulada (fallback)
 async def analyze_candidate_simulated(
     text_content: str,
     stage_description: str,
     requirements: list[dict]
 ) -> EvaluationResult:
     """
-    Análise simulada do candidato baseada exclusivamente no conteúdo real do currículo
+    Análise simulada do candidato (fallback)
     """
     await asyncio.sleep(2)  # Simula processamento
-
-    # Se não houver conteúdo de currículo, retornar análise vazia
-    if not text_content or not text_content.strip():
-        return EvaluationResult(
-            score=0.0,
-            analysis="Não foi possível realizar a análise: currículo vazio ou não fornecido.",
-            matched_requirements=[],
-            missing_requirements=["Currículo não fornecido"],
-            strengths=[],
-            weaknesses=["Ausência de informações do candidato"],
-            recommendations=["Fornecer currículo para análise"]
-        )
-
+    
     text_lower = text_content.lower()
     stage_lower = stage_description.lower()
-
+    
     # Pontuação base (0-10)
     base_score = 5.0
-
+    
     # Análise de correspondência com descrição da etapa
-    stage_keywords = ["vendas", "comercial", "atendimento", "cliente", "negociação", "desenvolvimento", "programação", "análise", "gestão", "liderança"]
+    stage_keywords = ["vendas", "comercial", "atendimento", "cliente", "negociação"]
     stage_matches = sum(1 for keyword in stage_keywords if keyword in text_lower)
-    stage_bonus = min(stage_matches * 0.3, 1.5)
-
-    # Análise de requisitos baseada no conteúdo real
+    stage_bonus = min(stage_matches * 0.5, 2.0)
+    
+    # Análise de requisitos
     matched_reqs = []
     missing_reqs = []
     strengths = []
     weaknesses = []
     req_bonus = 0.0
-
-    # Extrair informações reais do currículo para análise
-    lines = [line.strip() for line in text_content.split('\n') if line.strip()]
-    experiences = []
-    education = []
-    skills = []
-
-    for line in lines:
-        if any(keyword in line.lower() for keyword in ["experiência", "trabalhou", "atuou", "cargo", "empresa"]):
-            experiences.append(line)
-        elif any(keyword in line.lower() for keyword in ["formação", "graduação", "curso", "universidade", "faculdade"]):
-            education.append(line)
-        elif any(keyword in line.lower() for keyword in ["habilidade", "competência", "conhecimento", "skill"]):
-            skills.append(line)
-
-    # Análise baseada em experiências reais encontradas
-    if experiences:
-        exp_text = ' '.join(experiences).lower()
-        if any(word in exp_text for word in ["vendas", "comercial", "cliente", "atendimento"]):
-            strengths.append("Possui experiência comprovada em área comercial/vendas baseada no currículo")
-            matched_reqs.append("Experiência em vendas/comercial identificada no currículo")
-            req_bonus += 1.0
-        if any(word in exp_text for word in ["desenvolvimento", "programação", "software", "sistema"]):
-            strengths.append("Demonstra experiência em desenvolvimento de software")
-            matched_reqs.append("Experiência em desenvolvimento identificada")
-            req_bonus += 1.0
-        if any(word in exp_text for word in ["gestão", "liderança", "equipe", "coordenação"]):
-            strengths.append("Apresenta experiência em gestão e liderança")
-            matched_reqs.append("Experiência em gestão identificada")
-            req_bonus += 0.8
-
-    # Análise baseada em formação
-    if education:
-        edu_text = ' '.join(education).lower()
-        if any(word in edu_text for word in ["administração", "engenharia", "computação", "sistemas"]):
-            strengths.append("Formação acadêmica relevante identificada no currículo")
-            req_bonus += 0.5
-
-    # Análise baseada em habilidades
-    if skills:
-        skills_text = ' '.join(skills).lower()
-        if any(word in skills_text for word in ["comunicação", "trabalho em equipe", "liderança"]):
-            strengths.append("Habilidades interpessoais identificadas no currículo")
-            req_bonus += 0.3
-
-    # Análise específica dos requisitos da etapa baseada no conteúdo real
+    
+    # Análise específica baseada no conteúdo do currículo
+    tech_keywords = ["python", "react", "javascript", "java", "node", "sql", "mysql", "postgresql", "docker", "aws", "azure", "git", "scrum", "kanban", "agile"]
+    management_keywords = ["liderança", "gestão", "equipe", "supervisão", "coordenação", "gerenciamento"]
+    sales_keywords = ["vendas", "comercial", "atendimento", "cliente", "negociação", "prospecção", "fechamento"]
+    
+    # Verificar tecnologias mencionadas no currículo
+    tech_found = [tech for tech in tech_keywords if tech in text_lower]
+    management_found = [mgmt for mgmt in management_keywords if mgmt in text_lower]
+    sales_found = [sales for sales in sales_keywords if sales in text_lower]
+    
+    # Gerar pontos fortes específicos
+    if tech_found:
+        strengths.append(f"Demonstra experiência técnica sólida em: {', '.join(tech_found[:3])}")
+        matched_reqs.append(f"Possui conhecimento técnico em {', '.join(tech_found[:2])}")
+        req_bonus += 1.0
+    
+    if management_found:
+        strengths.append(f"Experiência comprovada em liderança e gestão de equipes")
+        matched_reqs.append(f"Demonstra habilidades de liderança e supervisão")
+        req_bonus += 0.8
+    
+    if sales_found:
+        strengths.append(f"Experiência sólida em vendas e atendimento comercial")
+        matched_reqs.append(f"Possui experiência em processos comerciais e vendas")
+        req_bonus += 0.6
+    
+    # Gerar pontos de melhoria específicos
+    if not tech_found:
+        missing_reqs.append("Falta experiência técnica específica em tecnologias modernas")
+        weaknesses.append("Não demonstra conhecimento técnico em ferramentas de desenvolvimento")
+    
+    if not management_found:
+        missing_reqs.append("Ausência de experiência em liderança e gestão de equipes")
+        weaknesses.append("Falta de experiência comprovada em supervisão e coordenação")
+    
+    if not sales_found:
+        missing_reqs.append("Não demonstra experiência em vendas ou atendimento comercial")
+        weaknesses.append("Falta de experiência em processos comerciais e negociação")
+    
+    # Análise específica dos requisitos da etapa
     for req in requirements:
         req_text = req.get("label", "").lower()
         req_desc = req.get("description", "").lower()
         req_weight = req.get("weight", 1.0)
-
-        # Verificar se o requisito está presente no conteúdo real do currículo
+        
         if req_text in text_lower or req_desc in text_lower:
-            matched_reqs.append(f"Requisito atendido: {req.get('label', '')} - {req.get('description', '')}")
+            matched_reqs.append(f"Demonstra experiência específica em {req.get('label', '')}: {req.get('description', '')}")
             req_bonus += 0.5 * req_weight
         else:
-            missing_reqs.append(f"Requisito não atendido: {req.get('label', '')} - {req.get('description', '')}")
-
-    # Se não encontrou pontos fortes específicos, criar baseados no conteúdo geral
-    if not strengths and text_content.strip():
-        word_count = len(text_content.split())
-        if word_count > 100:
-            strengths.append("Currículo detalhado com informações abrangentes")
-        elif word_count > 50:
-            strengths.append("Currículo com informações relevantes")
-        else:
-            strengths.append("Currículo básico fornecido")
-
-    # Análise de pontos de melhoria baseados na ausência de informações
-    if not any(word in text_lower for word in ["experiência", "trabalhou", "atuou"]):
-        weaknesses.append("Ausência de informações sobre experiências profissionais")
-        missing_reqs.append("Experiência profissional não detalhada no currículo")
-
-    if not any(word in text_lower for word in ["formação", "graduação", "curso"]):
-        weaknesses.append("Ausência de informações sobre formação acadêmica")
-        missing_reqs.append("Formação acadêmica não informada")
-
-    # Cálculo da pontuação final baseada no conteúdo real
-    content_score = min(len(strengths) * 1.5 + req_bonus, 5.0)
-    final_score = min(base_score + stage_bonus + content_score, 10.0)
-
-    # Gera análise textual baseada exclusivamente no conteúdo real
+            missing_reqs.append(f"Falta experiência específica em {req.get('label', '')}: {req.get('description', '')}")
+            weaknesses.append(f"Não demonstra conhecimento em {req.get('label', '')} conforme descrito na etapa")
+    
+    # Cálculo da pontuação final
+    final_score = min(base_score + stage_bonus + req_bonus, 10.0)
+    
+    # Gera análise textual
     analysis = f"""
-    Análise baseada exclusivamente no conteúdo do currículo fornecido:
-
-    ✅ Informações encontradas no currículo:
-    - {len(experiences)} menções à experiência profissional
-    - {len(education)} menções à formação acadêmica
-    - {len(skills)} menções à habilidades/competências
-    - {len(matched_reqs)} requisitos da etapa atendidos
-    - {stage_matches} palavras-chave da descrição da etapa encontradas
-
-    ⚠️ Lacunas identificadas:
-    - {len(missing_reqs)} requisitos da etapa não atendidos
-    - Principais pontos de melhoria baseados no conteúdo fornecido
-
-    📊 Pontuação: {final_score:.1f}/10 (baseada na quantidade e qualidade das informações do currículo)
+    Análise do candidato para a etapa:
+    
+    ✅ Pontos fortes:
+    - {len(matched_reqs)} requisitos atendidos
+    - Correspondência com descrição da etapa: {stage_matches}/5 palavras-chave
+    
+    ⚠️ Pontos de melhoria:
+    - {len(missing_reqs)} requisitos não identificados
+    
+    📊 Pontuação: {final_score:.1f}/10
     """
-
-    # Adiciona pontos de melhoria específicos se não houver requisitos específicos
+    
+    # Adiciona pontos fortes e fracos baseados no conteúdo
+    if not strengths:
+        strengths.append("Candidato apresenta experiência relevante para a posição")
     if not weaknesses:
-        if len(text_content) < 200:
-            weaknesses.append("Currículo muito conciso - considere adicionar mais detalhes sobre experiências")
-        else:
-            weaknesses.append("Currículo analisado com sucesso - nenhuma fraqueza crítica identificada")
-
+        weaknesses.append("Nenhuma fraqueza específica identificada na análise inicial")
+    
+    # Adiciona análise específica baseada no conteúdo do currículo
+    if "python" in text_lower:
+        strengths.append("Demonstra conhecimento em Python para desenvolvimento backend")
+    if "react" in text_lower:
+        strengths.append("Possui experiência em React para desenvolvimento frontend")
+    if "php" in text_lower:
+        strengths.append("Conhece PHP para desenvolvimento backend")
+    if "typescript" in text_lower:
+        strengths.append("Demonstra conhecimento em TypeScript")
+    if "aws" in text_lower:
+        strengths.append("Possui experiência com serviços AWS")
+    if "docker" in text_lower:
+        strengths.append("Conhece Docker para containerização")
+    if "fintech" in text_lower or "banking" in text_lower or "financeiro" in text_lower:
+        strengths.append("Experiência relevante em projetos do setor financeiro")
+    
+    # Identifica possíveis lacunas específicas
+    if "mysql" not in text_lower and "database" not in text_lower:
+        weaknesses.append("Não demonstra experiência específica com bancos de dados MySQL")
+    if "microserviços" not in text_lower and "microservices" not in text_lower:
+        weaknesses.append("Falta experiência específica com arquitetura de microserviços")
+    if "scrum" not in text_lower and "kanban" not in text_lower and "ágil" not in text_lower:
+        weaknesses.append("Não demonstra experiência com metodologias ágeis")
+    
     return EvaluationResult(
         score=round(final_score, 1),
         analysis=analysis.strip(),
@@ -821,19 +679,17 @@ async def analyze_candidate_simulated(
         missing_requirements=missing_reqs,
         strengths=strengths,
         weaknesses=weaknesses,
-        recommendations=["Revisar currículo para próxima análise", "Considerar entrevista técnica"]
+        recommendations=["Considerar para próxima etapa", "Avaliar em entrevista"]
     )
 
-# Buscar configurações do usuário - MELHORADA COM VALIDAÇÕES
+# Buscar configurações do usuário (simulado - em produção, buscar do DB)
 async def get_user_ai_config(user_id: str) -> AIConfig:
     """
-    Busca configurações da IA do usuário com validações robustas.
+    Busca configurações da IA do usuário.
     Se não houver configuração persistida, utiliza variáveis de ambiente como fallback.
     """
-    print(f"[IA] ========== INICIANDO BUSCA DE CONFIGURAÇÕES ==========")
-    print(f"[IA] User ID: {user_id}")
-
-    # Variáveis de ambiente como fallback
+    print(f"[IA] Buscando configurações para user_id: {user_id}")
+    
     env_api_key = os.getenv("OPENAI_API_KEY", "")
     env_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     env_temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
@@ -841,17 +697,15 @@ async def get_user_ai_config(user_id: str) -> AIConfig:
 
     supabase_url = os.getenv("SUPABASE_URL")
     service_role = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    
+    print(f"[IA] Variáveis de ambiente - supabase_url: {bool(supabase_url)}, service_role: {bool(service_role)}")
+    print(f"[IA] Chave de ambiente: {env_api_key[:10] if env_api_key else 'VAZIA'}...")
 
-    print(f"[IA] ========== VARIÁVEIS DE AMBIENTE ==========")
-    print(f"[IA] SUPABASE_URL: {supabase_url}")
-    print(f"[IA] SUPABASE_SERVICE_ROLE_KEY: {'CONFIGURADO' if service_role else 'VAZIO'}")
-    print(f"[IA] OPENAI_API_KEY ambiente: {env_api_key[:15] + '...' if env_api_key else 'VAZIO'}")
-
-    # Tentar buscar configurações do banco de dados
-    if supabase_url and service_role and user_id and user_id != "default":
-        print(f"[IA] ========== BUSCANDO CONFIGURAÇÕES NO BANCO ==========")
+    if supabase_url and service_role and user_id != "default":
+        print(f"[IA] Supabase URL: {supabase_url}")
         print(f"[IA] Fazendo requisição para: {supabase_url}/rest/v1/rpc/get_ai_settings_by_user")
-
+        print(f"[IA] Payload: {{'p_user_id': '{user_id}'}}")
+        
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -863,94 +717,43 @@ async def get_user_ai_config(user_id: str) -> AIConfig:
                         "Accept": "application/json",
                         "Content-Type": "application/json",
                     },
-                    timeout=15.0,
+                    timeout=10.0,
                 )
-
-                print(f"[IA] Status da resposta do banco: {response.status_code}")
-
+                print(f"[IA] Status da resposta: {response.status_code}")
                 if response.status_code == 200:
                     data = response.json()
-                    print(f"[IA] Dados retornados do banco: {len(data) if data else 0} registros")
-
-                    if data and len(data) > 0:
+                    print(f"[IA] ai_settings response: {data}")
+                    if data:
                         record = data[0]
-                        print(f"[IA] ========== DADOS DO USUÁRIO ENCONTRADOS ==========")
-                        print(f"[IA] Model: {record.get('model', 'NÃO CONFIGURADO')}")
-                        print(f"[IA] Temperature: {record.get('temperature', 'NÃO CONFIGURADO')}")
-                        print(f"[IA] Max Tokens: {record.get('max_tokens', 'NÃO CONFIGURADO')}")
-
-                        # Processar chave da API
-                        api_key_raw = record.get("openai_api_key")
-                        print(f"[IA] Chave API raw encontrada: {'SIM' if api_key_raw else 'NÃO'}")
-
-                        if api_key_raw:
-                            try:
-                                decoded_key = base64.b64decode(api_key_raw).decode('utf-8')
-                                print(f"[IA] Chave API decodificada com sucesso: {decoded_key[:15]}...")
-
-                                # Validar se a chave parece válida (não é vazia após decodificar)
-                                if decoded_key and decoded_key.strip():
-                                    env_api_key = decoded_key.strip()
-                                    print(f"[IA] ✅ Chave API válida atribuída do banco de dados")
-                                else:
-                                    print(f"[IA] ❌ Chave API decodificada está vazia")
-
-                            except Exception as decode_error:
-                                print(f"[IA] ❌ Erro ao decodificar chave API: {decode_error}")
-                                print(f"[IA] Chave raw: {api_key_raw[:50] if api_key_raw else 'VAZIA'}...")
-                        else:
-                            print(f"[IA] ❌ Chave API não encontrada no registro do usuário")
-
-                        # Aplicar outras configurações se disponíveis
-                        if record.get("model"):
-                            env_model = record.get("model")
-                            print(f"[IA] Modelo atualizado: {env_model}")
-
-                        if record.get("temperature") is not None:
-                            env_temperature = float(record.get("temperature"))
-                            print(f"[IA] Temperature atualizada: {env_temperature}")
-
-                        if record.get("max_tokens"):
-                            env_max_tokens = int(record.get("max_tokens"))
-                            print(f"[IA] Max tokens atualizado: {env_max_tokens}")
-
+                        print(f"[IA] Record encontrado: {record}")
+                        try:
+                            api_key = record.get("openai_api_key")
+                            print(f"[IA] API key raw: {api_key}")
+                            if api_key:
+                                decoded_key = base64.b64decode(api_key).decode('utf-8')
+                                print(f"[IA] API key decodificada: {decoded_key[:10]}...")
+                                env_api_key = decoded_key  # ATRIBUIR A CHAVE DECODIFICADA
+                                print(f"[IA] env_api_key atribuída: {env_api_key[:10]}...")
+                        except Exception as decode_ex:
+                            print(f"[IA] Falha ao decodificar chave: {decode_ex}")
+                        env_model = record.get("model", env_model)
+                        env_temperature = float(record.get("temperature", env_temperature))
+                        env_max_tokens = int(record.get("max_tokens", env_max_tokens))
                     else:
-                        print(f"[IA] ❌ Nenhum registro encontrado para o usuário {user_id}")
-                        print(f"[IA] ⚠️ Usando configurações de ambiente como fallback")
-
-                elif response.status_code == 404:
-                    print(f"[IA] ❌ Função get_ai_settings_by_user não encontrada - verifique se existe no banco")
+                        print("[IA] Nenhum registro encontrado para o usuário")
                 else:
-                    print(f"[IA] ❌ Erro na resposta do banco: {response.status_code}")
-                    print(f"[IA] Resposta: {response.text}")
-
-        except Exception as db_error:
-            print(f"[IA] ❌ Falha crítica ao conectar com banco de dados: {db_error}")
-            print(f"[IA] ⚠️ Continuando com configurações de ambiente")
-
+                    print(f"[IA] Erro Supabase {response.status_code}: {response.text}")
+        except Exception as ex:
+            print(f"[IA] Falha ao buscar ai_settings: {ex}")
     else:
-        print(f"[IA] ========== PULANDO BUSCA NO BANCO ==========")
-        if not supabase_url:
-            print(f"[IA] ❌ SUPABASE_URL não configurada")
-        if not service_role:
-            print(f"[IA] ❌ SUPABASE_SERVICE_ROLE_KEY não configurada")
-        if not user_id or user_id == "default":
-            print(f"[IA] ❌ User ID inválido: {user_id}")
+        print(f"[IA] Condições não atendidas para buscar ai_settings:")
+        print(f"[IA]   supabase_url: {bool(supabase_url)}")
+        print(f"[IA]   service_role: {bool(service_role)}")
+        print(f"[IA]   user_id != 'default': {user_id != 'default'}")
 
-    # Validação final da configuração
-    print(f"[IA] ========== CONFIGURAÇÃO FINAL ==========")
-    print(f"[IA] Modelo: {env_model}")
-    print(f"[IA] Temperature: {env_temperature}")
-    print(f"[IA] Max Tokens: {env_max_tokens}")
-    print(f"[IA] Chave API configurada: {'✅ SIM' if env_api_key and env_api_key.strip() else '❌ NÃO'}")
-
-    if env_api_key and env_api_key.strip():
-        print(f"[IA] Chave API (primeiros 15 chars): {env_api_key[:15]}...")
-    else:
-        print(f"[IA] ❌ ATENÇÃO: Chave API não configurada - análise será simulada")
-
+    print(f"[IA] Retornando AIConfig com chave: {env_api_key[:10] if env_api_key else 'VAZIA'}...")
     return AIConfig(
-        openai_api_key=env_api_key.strip() if env_api_key else "",
+        openai_api_key=env_api_key,
         model=env_model,
         temperature=env_temperature,
         max_tokens=env_max_tokens,
@@ -1021,23 +824,23 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
             resume_text = ""
             resume_warnings: list[str] = []
             try:
-                print(f"[IA] ========== DEBUG EXTRAÇÃO DE CURRÍCULO ==========")
-                print(f"[IA] Tentando extrair currículo:")
-                print(f"[IA]   - resume_path: {request.resume_path}")
-                print(f"[IA]   - resume_signed_url: {request.resume_signed_url}")
-                print(f"[IA]   - resume_bucket: {request.resume_bucket}")
+        print(f"[IA] ========== DEBUG EXTRAÇÃO DE CURRÍCULO ==========")
+        print(f"[IA] Tentando extrair currículo:")
+        print(f"[IA]   - resume_path: {request.resume_path}")
+        print(f"[IA]   - resume_signed_url: {request.resume_signed_url}")
+        print(f"[IA]   - resume_bucket: {request.resume_bucket}")
 
-                resume_text, resume_warnings = await extract_resume_text(
-                    request.resume_path,
-                    request.resume_signed_url,
-                    request.resume_bucket,
-                )
-                print(f"[IA] ========== RESULTADO DA EXTRAÇÃO ==========")
-                print(f"[IA] Texto extraído do currículo ({len(resume_text)} chars):")
-                print(f"[IA] ========== CONTEÚDO COMPLETO ==========")
-                print(f"[IA] {resume_text}")
-                print(f"[IA] ========== FIM DO CONTEÚDO ==========")
-                print(f"[IA] Warnings da extração: {resume_warnings}")
+        resume_text, resume_warnings = await extract_resume_text(
+            request.resume_path,
+            request.resume_signed_url,
+            request.resume_bucket,
+        )
+        print(f"[IA] ========== RESULTADO DA EXTRAÇÃO ==========")
+        print(f"[IA] Texto extraído do currículo ({len(resume_text)} chars):")
+        print(f"[IA] ========== CONTEÚDO COMPLETO ==========")
+        print(f"[IA] {resume_text}")
+        print(f"[IA] ========== FIM DO CONTEÚDO ==========")
+        print(f"[IA] Warnings da extração: {resume_warnings}")
             except Exception as ex:
                 resume_warnings.append(f"Falha ao ler currículo: {ex}")
                 print(f"[IA] Erro ao extrair currículo: {ex}")

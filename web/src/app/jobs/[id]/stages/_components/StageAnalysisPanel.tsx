@@ -39,6 +39,13 @@ export default function StageAnalysisPanel({ analysis, candidateName, loading, e
 
   useEffect(() => {
     console.log('[DEBUG] StageAnalysisPanel recebeu análise:', analysis)
+    if (analysis?.result) {
+      console.log('[DEBUG] Resultado da análise:', analysis.result)
+      console.log('[DEBUG] Score:', analysis.result.score)
+      console.log('[DEBUG] Analysis:', analysis.result.analysis)
+      console.log('[DEBUG] Strengths:', analysis.result.strengths)
+      console.log('[DEBUG] Weaknesses:', analysis.result.weaknesses)
+    }
   }, [analysis])
 
   if (!candidateName) {
@@ -92,9 +99,6 @@ export default function StageAnalysisPanel({ analysis, candidateName, loading, e
   const score = analysis.result?.score ?? null
   const strengths = analysis.result?.strengths ?? []
   const weaknesses = analysis.result?.weaknesses ?? []
-  const recommendations = analysis.result?.recommendations ?? []
-  const matched = analysis.result?.matched_requirements ?? []
-  const missing = analysis.result?.missing_requirements ?? []
   const warnings = analysis.result?.extraction_warnings ?? []
 
   return (
@@ -132,14 +136,7 @@ export default function StageAnalysisPanel({ analysis, candidateName, loading, e
 
           <div className="grid gap-3">
             {renderList('Pontos fortes', strengths, 'Nenhum ponto forte identificado.', 'positive')}
-            {renderList('Pontos de melhoria', weaknesses, 'Nenhuma fraqueza identificada.', 'negative')}
-          </div>
-
-          {renderList('Recomendações', recommendations, 'Nenhuma recomendação disponível.')}
-
-          <div className="grid gap-3">
-            {renderList('Requisitos atendidos', matched, 'Nenhum requisito atendido ainda.', 'positive')}
-            {renderList('Requisitos não atendidos', missing, 'Nenhum requisito faltante identificado.', 'negative')}
+            {renderList('Requisitos não atendidos', weaknesses, 'Nenhum requisito faltante identificado.', 'negative')}
           </div>
 
           {warnings.length > 0 && (

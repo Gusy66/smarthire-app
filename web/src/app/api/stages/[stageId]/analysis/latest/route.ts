@@ -18,6 +18,8 @@ export async function GET(req: NextRequest, { params }: Params) {
 
   const supabase = getSupabaseAdmin()
   
+  console.log(`[DEBUG API] Usuário autenticado: ${user.id}`)
+  
   try {
     console.log(`[DEBUG API] Buscando análise mais recente para stageId: ${stageId}`)
     

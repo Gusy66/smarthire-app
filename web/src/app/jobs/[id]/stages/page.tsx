@@ -280,9 +280,13 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     console.log(`[DEBUG] Carregando análise mais recente para etapa ${stageId}`)
     setAnalysisLoading((prev) => ({ ...prev, [stageId]: true }))
     try {
+      console.log(`[DEBUG] Fazendo requisição para: /api/stages/${stageId}/analysis/latest`)
       const res = await fetch(`/api/stages/${stageId}/analysis/latest`)
+      console.log(`[DEBUG] Resposta recebida:`, { status: res.status, ok: res.ok })
+      
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
+        console.log(`[DEBUG] Erro na resposta:`, err)
         if (err?.error?.code === 'not_found') {
           console.log(`[DEBUG] Nenhuma análise encontrada para etapa ${stageId}`)
           setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
@@ -292,6 +296,17 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       }
       const json = await res.json()
       console.log(`[DEBUG] Análise mais recente carregada para etapa ${stageId}:`, json.item)
+      console.log(`[DEBUG] Dados da análise:`, {
+        id: json.item?.id,
+        run_id: json.item?.run_id,
+        result: json.item?.result,
+        score: json.item?.result?.score,
+        strengths: json.item?.result?.strengths,
+        weaknesses: json.item?.result?.weaknesses,
+        matched_requirements: json.item?.result?.matched_requirements,
+        missing_requirements: json.item?.result?.missing_requirements
+      })
+      
       if (json.item) {
         setAnalysisByStage((prev) => ({ ...prev, [stageId]: json.item }))
         setAnalysisExpanded((prev) => ({ ...prev, [stageId]: true }))
@@ -299,10 +314,12 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         if (json.item.application_id) {
           const candidate = applications.find(app => app.id === json.item.application_id)?.candidate_id
           if (candidate) {
+            console.log(`[DEBUG] Selecionando candidato automaticamente: ${candidate}`)
             setStageSelectedCandidates((prev) => ({ ...prev, [stageId]: candidate }))
           }
         }
       } else {
+        console.log(`[DEBUG] Nenhum item retornado para etapa ${stageId}`)
         setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
       }
     } catch (error: any) {
@@ -349,19 +366,44 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Etapas da Vaga</h1>
+    <div className="space-y-8">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Etapas da Vaga</h1>
+        <p className="text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
+      </div>
 
-      <section className="card p-4 space-y-3 max-w-2xl">
-        <h2 className="font-medium">Criar etapa</h2>
-        <form onSubmit={createStage} className="grid gap-3">
-          <input
-            value={stageForm.name}
-            onChange={(e) => setStageForm((f) => ({ ...f, name: e.target.value }))}
-            placeholder="Nome da etapa"
-            className="border rounded px-3 py-2"
-            required
-          />
+      {/* Criar Nova Etapa */}
+      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">Criar Nova Etapa</h2>
+        <form onSubmit={createStage} className="grid gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <input
+              value={stageForm.name}
+              onChange={(e) => setStageForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Nome da etapa"
+              className="border rounded px-3 py-2"
+              required
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                step="0.01"
+                value={stageForm.threshold}
+                onChange={(e) => setStageForm((f) => ({ ...f, threshold: Number(e.target.value) }))}
+                placeholder="Threshold"
+                className="border rounded px-3 py-2"
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={stageForm.stage_weight}
+                onChange={(e) => setStageForm((f) => ({ ...f, stage_weight: Number(e.target.value) }))}
+                placeholder="Peso"
+                className="border rounded px-3 py-2"
+              />
+            </div>
+          </div>
           <textarea
             value={stageForm.description}
             onChange={(e) => setStageForm((f) => ({ ...f, description: e.target.value }))}
@@ -369,74 +411,64 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
             className="border rounded px-3 py-2"
             rows={3}
           />
-          <div className="grid grid-cols-2 gap-3">
-            <input
-              type="number"
-              step="0.01"
-              value={stageForm.threshold}
-              onChange={(e) => setStageForm((f) => ({ ...f, threshold: Number(e.target.value) }))}
-              placeholder="Threshold (mínimo para aprovar)"
-              className="border rounded px-3 py-2"
-            />
-            <input
-              type="number"
-              step="0.01"
-              value={stageForm.stage_weight}
-              onChange={(e) => setStageForm((f) => ({ ...f, stage_weight: Number(e.target.value) }))}
-              placeholder="Peso da etapa"
-              className="border rounded px-3 py-2"
-            />
-          </div>
-          <button disabled={creating} className="btn btn-primary">
+          <button disabled={creating} className="btn btn-primary w-fit">
             {creating ? 'Criando...' : 'Adicionar etapa'}
           </button>
         </form>
       </section>
 
-      <section className="space-y-4">
-        <h2 className="font-medium">Selecionar candidato para avaliação</h2>
-        <select
-          className="border rounded px-3 py-2"
-          value={selectedCandidateId ?? ''}
-          onChange={(e) => setSelectedCandidateId(e.target.value || null)}
-        >
-          <option value="">Selecione um candidato</option>
-          {candidates.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name} {c.email ? `(${c.email})` : ''}
-            </option>
-          ))}
-        </select>
-        <button onClick={assignCandidate} disabled={!selectedCandidateId} className="ml-2 btn btn-primary">
-          Atribuir à vaga
-        </button>
-        <div className="text-sm text-gray-700">
-          Atribuídos:
-          <ul className="list-disc pl-5">
-            {applications.map((a) => {
-              const c = candidates.find((x) => x.id === a.candidate_id)
-              return (
-                <li key={a.id}>
-                  {c?.name || a.candidate_id}
-                  <button className="ml-2 text-red-600 underline" onClick={async()=>{ if(!confirm('Remover candidato desta vaga?')) return; await fetch(`/api/applications/${a.id}`, { method: 'DELETE' }); const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r)=>r.json()); setApplications(apps.items || []) }}>Remover</button>
-                </li>
-              )
-            })}
-          </ul>
+      {/* Gerenciamento de Candidatos */}
+      <section className="bg-gray-50 rounded-lg p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">Gerenciamento de Candidatos</h2>
+        <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            <select
+              className="border rounded px-3 py-2 flex-1"
+              value={selectedCandidateId ?? ''}
+              onChange={(e) => setSelectedCandidateId(e.target.value || null)}
+            >
+              <option value="">Selecione um candidato</option>
+              {candidates.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} {c.email ? `(${c.email})` : ''}
+                </option>
+              ))}
+            </select>
+            <button onClick={assignCandidate} disabled={!selectedCandidateId} className="btn btn-primary">
+              Atribuir à vaga
+            </button>
+          </div>
+          <div className="text-sm text-gray-700">
+            <strong>Candidatos atribuídos:</strong>
+            <ul className="list-disc pl-5 mt-2">
+              {applications.map((a) => {
+                const c = candidates.find((x) => x.id === a.candidate_id)
+                return (
+                  <li key={a.id} className="flex items-center justify-between">
+                    <span>{c?.name || a.candidate_id}</span>
+                    <button 
+                      className="text-red-600 hover:text-red-700 underline text-xs" 
+                      onClick={async()=>{ 
+                        if(!confirm('Remover candidato desta vaga?')) return; 
+                        await fetch(`/api/applications/${a.id}`, { method: 'DELETE' }); 
+                        const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r)=>r.json()); 
+                        setApplications(apps.items || []) 
+                      }}
+                    >
+                      Remover
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
         </div>
       </section>
 
-      {/* Header simples */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Etapas da Vaga</h1>
-        <p className="text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
-      </div>
-
-      {/* Layout principal com etapas à esquerda e análise à direita */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Etapas à esquerda */}
-        <div className="lg:col-span-2 space-y-6">
-          <h2 className="text-xl font-semibold text-gray-900">Etapas Configuradas</h2>
+      {/* Etapas Configuradas */}
+      <section>
+        <h2 className="text-xl font-semibold text-gray-900 mb-6">Etapas Configuradas</h2>
+        <div className="space-y-6">
           {stages.map((s) => (
             <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
               {/* Header da etapa */}
@@ -549,9 +581,9 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                   onChange={handleStagePromptChange}
                 />
                 
-                {/* Seção de análise de candidato */}
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="font-semibold text-gray-900 mb-4 flex items-center">
+                {/* Seção de análise de candidato - SEMPRE VISÍVEL E EXPANDIDA */}
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <h4 className="font-semibold text-gray-900 mb-6 flex items-center">
                     <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                     </svg>
@@ -559,7 +591,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                   </h4>
                   
                   {/* Seletor de candidato */}
-                  <div className="mb-4">
+                  <div className="mb-6">
                     <label className="block text-sm font-medium text-gray-700 mb-2">Candidato para avaliação:</label>
                     <div className="flex flex-col sm:flex-row gap-2">
                       <select
@@ -606,40 +638,77 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                       }
                     }}
                   />
+
                 </div>
               </div>
             </div>
           ))}
         </div>
+      </section>
 
-        {/* Painel de análise à direita */}
-        <div className="lg:col-span-1">
-          <div className="sticky top-4">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Análises de Candidatos</h2>
-            <div className="space-y-4">
-              {stages.map((s) => (
-                <StageAnalysisPanel
-                  key={s.id}
-                  candidateName={stageSelectedCandidates[s.id] ? (candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null) : null}
-                  analysis={stageSelectedCandidates[s.id] ? (analysisByStage[s.id] || null) : null}
-                  loading={Boolean(analysisLoading[s.id])}
-                  expanded={analysisExpanded[s.id] ?? false}
-                  onToggle={() => setAnalysisExpanded((prev) => ({ ...prev, [s.id]: !(prev[s.id] ?? false) }))}
-                  onRefresh={() => {
-                    const candidateId = stageSelectedCandidates[s.id] ?? null
-                    if (candidateId) loadAnalysisForStage(s.id, candidateId)
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
+      {/* Painel de candidatos */}
       <section>
-        <h2 className="font-medium">Painel de candidatos (MVP)</h2>
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">Painel de Candidatos (MVP)</h2>
         <Panel jobId={jobId} />
       </section>
+
+      {/* Análises de Candidatos - SEMPRE VISÍVEIS */}
+      <section>
+        <h2 className="text-xl font-semibold text-gray-900 mb-6">Análises de Candidatos</h2>
+        <div className="space-y-6">
+          {stages.map((s) => (
+            <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+              {/* Header da etapa */}
+              <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
+                    <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
+                      <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                        Threshold: {s.threshold}
+                      </span>
+                      <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
+                        Peso: {s.stage_weight}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Análise sempre visível - expandida */}
+              <div className="p-6">
+                {(() => {
+                  const candidateName = stageSelectedCandidates[s.id] ? (candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null) : null
+                  const analysis = analysisByStage[s.id] || null
+                  const loading = Boolean(analysisLoading[s.id])
+                  
+                  console.log(`[DEBUG] Renderizando análise para etapa ${s.id}:`, {
+                    candidateName,
+                    analysis,
+                    loading,
+                    analysisResult: analysis?.result
+                  })
+                  
+                  return (
+                    <StageAnalysisPanel
+                      candidateName={candidateName}
+                      analysis={analysis}
+                      loading={loading}
+                      expanded={true} // Sempre expandido
+                      onToggle={() => {}} // Não permite colapsar
+                      onRefresh={() => {
+                        const candidateId = stageSelectedCandidates[s.id] ?? null
+                        if (candidateId) loadAnalysisForStage(s.id, candidateId)
+                      }}
+                    />
+                  )
+                })()}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
     </div>
   )
 }
