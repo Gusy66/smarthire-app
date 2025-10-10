@@ -5,8 +5,42 @@ import asyncio
 import json
 from typing import Dict, Any
 import os
+from dotenv import load_dotenv
+import logging
 
-app = FastAPI(title="SmartHire AI Service", version="0.1.0")
+# Carregar variáveis de ambiente com tolerância a erros (ex.: arquivo .env com codificação inválida)
+try:
+    load_dotenv()
+except Exception:
+    # Em produção, as variáveis vêm do ambiente; ignore erros ao ler .env
+    pass
+
+# Configurar logging
+logging.basicConfig(
+    level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO').upper()),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="SmartHire AI Service",
+    version="0.1.0",
+    description="Serviço de IA para processamento de áudio, transcrição e avaliação de candidatos"
+)
+
+# Adicionar CORS middleware para produção
+from fastapi.middleware.cors import CORSMiddleware
+
+# Configurar CORS baseado em ambiente
+allowed_origins = os.getenv('ALLOWED_ORIGINS', '*').split(',') if os.getenv('ALLOWED_ORIGINS') else ['*']
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Armazenamento em memória dos runs (em produção, usar Redis/DB)
 runs: Dict[str, Dict[str, Any]] = {}
@@ -121,6 +155,8 @@ async def analyze_candidate(
 @app.post("/v1/transcribe", response_model=RunStatus)
 async def transcribe(request: TranscribeRequest):
     run_id = str(uuid.uuid4())
+    logger.info(f"Iniciando transcrição {run_id} para arquivo: {request.audio_path}")
+
     runs[run_id] = {
         "id": run_id,
         "type": "transcribe",
@@ -128,26 +164,31 @@ async def transcribe(request: TranscribeRequest):
         "progress": 0,
         "result": None
     }
-    
+
     # Processa em background
     asyncio.create_task(process_transcription(run_id, request.audio_path))
-    
+
     return RunStatus(id=run_id, type="transcribe", status="running", progress=0)
 
 async def process_transcription(run_id: str, audio_path: str):
     try:
+        logger.info(f"Processando transcrição {run_id}")
         runs[run_id]["progress"] = 50
         transcript = await process_audio(audio_path)
         runs[run_id]["status"] = "succeeded"
         runs[run_id]["progress"] = 100
         runs[run_id]["result"] = {"transcript": transcript}
+        logger.info(f"Transcrição {run_id} concluída com sucesso")
     except Exception as e:
+        logger.error(f"Erro na transcrição {run_id}: {str(e)}")
         runs[run_id]["status"] = "failed"
         runs[run_id]["error"] = str(e)
 
 @app.post("/v1/evaluate", response_model=RunStatus)
 async def evaluate(request: EvaluateRequest):
     run_id = str(uuid.uuid4())
+    logger.info(f"Iniciando avaliação {run_id} para stage {request.stage_id}, application {request.application_id}")
+
     runs[run_id] = {
         "id": run_id,
         "type": "evaluate",
@@ -155,14 +196,15 @@ async def evaluate(request: EvaluateRequest):
         "progress": 0,
         "result": None
     }
-    
+
     # Processa em background
     asyncio.create_task(process_evaluation(run_id, request))
-    
+
     return RunStatus(id=run_id, type="evaluate", status="running", progress=0)
 
 async def process_evaluation(run_id: str, request: EvaluateRequest):
     try:
+        logger.info(f"Processando avaliação {run_id}")
         runs[run_id]["progress"] = 20
         
         # Coleta conteúdo de texto
@@ -202,8 +244,10 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
             "stage_id": request.stage_id,
             "application_id": request.application_id
         }
-        
+        logger.info(f"Avaliação {run_id} concluída com sucesso - Score: {evaluation.score}")
+
     except Exception as e:
+        logger.error(f"Erro na avaliação {run_id}: {str(e)}")
         runs[run_id]["status"] = "failed"
         runs[run_id]["error"] = str(e)
 

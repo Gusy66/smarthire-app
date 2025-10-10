@@ -1,0 +1,54 @@
+# Arquivos desnecessários no container
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.venv/
+venv/
+ENV/
+env/
+.ENV/
+env.bak/
+venv.bak/
+
+# Arquivos de desenvolvimento
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Arquivos de teste
+test_*.py
+tests/
+*.test
+*.spec
+
+# Documentação
+README.md
+docs/
+*.md
+
+# Arquivos de log e debug
+*.log
+debug_*.py
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
+
+# Arquivos temporários
+*.tmp
+*.temp

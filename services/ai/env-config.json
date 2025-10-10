@@ -1,0 +1,41 @@
+{
+  "description": "Arquivo de configuração para variáveis de ambiente do SmartHire AI Service",
+  "variables": {
+    "PORT": {
+      "description": "Porta do servidor",
+      "default": "8000",
+      "required": false
+    },
+    "WORKERS": {
+      "description": "Número de workers do uvicorn",
+      "default": "4",
+      "required": false
+    },
+    "OPENAI_API_KEY": {
+      "description": "Chave da API da OpenAI",
+      "required": true
+    },
+    "SUPABASE_URL": {
+      "description": "URL do projeto Supabase",
+      "required": true
+    },
+    "SUPABASE_ANON_KEY": {
+      "description": "Chave anônima do Supabase",
+      "required": true
+    },
+    "LOG_LEVEL": {
+      "description": "Nível de logging",
+      "default": "INFO",
+      "required": false
+    },
+    "SECRET_KEY": {
+      "description": "Chave secreta para segurança",
+      "required": true
+    },
+    "ENVIRONMENT": {
+      "description": "Ambiente (development, staging, production)",
+      "default": "production",
+      "required": false
+    }
+  }
+}
