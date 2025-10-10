@@ -195,16 +195,36 @@ export default function JobsPage() {
                   </p>
                 )}
                 
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-gray-500">
                     Criada em {new Date().toLocaleDateString('pt-BR')}
                   </span>
-                  <a 
-                    href={`/jobs/${j.id}/stages`} 
-                    className="btn btn-outline text-sm"
-                  >
-                    ⚙️ Etapas
-                  </a>
+                  <div className="flex items-center gap-2">
+                    <a 
+                      href={`/jobs/${j.id}/stages`} 
+                      className="btn btn-outline text-sm"
+                    >
+                      ⚙️ Etapas
+                    </a>
+                    <button
+                      className="btn btn-danger text-sm"
+                      onClick={async ()=>{
+                        if(!confirm('Excluir esta vaga? Essa ação não pode ser desfeita.')) return
+                        const res = await fetch(`/api/jobs/${j.id}`, { method: 'DELETE' })
+                        if(!res.ok){
+                          const t = await res.text();
+                          let msg = 'Falha ao excluir a vaga'
+                          try{ const j = t ? JSON.parse(t) : null; msg = j?.error?.message || msg }catch{}
+                          notify({ title: 'Erro', description: msg, variant: 'error' })
+                          return
+                        }
+                        await fetchJobs()
+                        notify({ title: 'Vaga excluída', variant: 'success' })
+                      }}
+                    >
+                      🗑️ Excluir
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

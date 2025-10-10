@@ -86,11 +86,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   }
 
   const applicationStageById = new Map<string, { applicationId: string; stageId: string }>()
+  const applicationStageByAppStageKey = new Map<string, string>() // key: `${applicationId}:${stageId}` -> application_stage_id
   applicationStages.forEach((appStage) => {
     applicationStageById.set(appStage.id, {
       applicationId: appStage.application_id,
       stageId: appStage.stage_id,
     })
+    applicationStageByAppStageKey.set(`${appStage.application_id}:${appStage.stage_id}`, appStage.id)
   })
 
   const applicationStageIds = applicationStages.map((as) => as.id)
@@ -108,7 +110,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     scores = scoresData ?? []
   }
 
-  const stageRequirementsMap = new Map<string, { requirementId: string; weight: number }[]>()
+  const stageRequirementsMap = new Map<string, { requirementId: string }[]>()
 
   if (stages?.length) {
     const { data: reqData, error: reqError } = await supabase
@@ -122,7 +124,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     reqData?.forEach((req) => {
       const list = stageRequirementsMap.get(req.stage_id) ?? []
-      list.push({ requirementId: req.id, weight: Number(req.weight ?? 1) })
+      list.push({ requirementId: req.id })
       stageRequirementsMap.set(req.stage_id, list)
     })
   }
@@ -141,11 +143,32 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     const key = `${appStage.applicationId}:${appStage.stageId}`
     const entry = stageScoresTotals.get(key) ?? { totalScore: 0, maxScore: 0 }
-    const weight = Number(req.weight ?? 1)
-    entry.totalScore += Number(score.value ?? 0) * weight
-    entry.maxScore += 10 * weight
+    // Os valores em stage_scores já estão ponderados por requisito na inserção automática.
+    // Aqui agregamos como média simples entre requisitos para obter nota 0..10.
+    entry.totalScore += Number(score.value ?? 0)
+    entry.maxScore += 10
     stageScoresTotals.set(key, entry)
   })
+
+  // Fallback: buscar a nota direta da IA quando não houver scores de requisitos
+  let runScoresByAppStage = new Map<string, number>()
+  if (applicationStageIds.length > 0) {
+    const { data: runsData, error: runsError } = await supabase
+      .from('stage_ai_runs')
+      .select('application_stage_id, status, result, created_at')
+      .in('application_stage_id', applicationStageIds)
+      .eq('type', 'evaluate')
+      .order('created_at', { ascending: false })
+    if (!runsError && runsData) {
+      for (const r of runsData) {
+        if (runScoresByAppStage.has(r.application_stage_id)) continue
+        if (r.status === 'succeeded' && r.result && typeof r.result.score === 'number') {
+          const scoreNum = Math.max(0, Math.min(10, Number(r.result.score)))
+          runScoresByAppStage.set(r.application_stage_id, scoreNum)
+        }
+      }
+    }
+  }
 
   const { data: candidatesData, error: candidatesError } = await supabase
     .from('candidates')
@@ -175,7 +198,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     const stageScores = (stages ?? []).map((stage) => {
       const key = `${app.id}:${stage.id}`
       const entry = stageScoresTotals.get(key)
-      const score = entry ? (entry.maxScore > 0 ? Math.min(10, entry.totalScore / entry.maxScore * 10) : 0) : 0
+      let score = entry ? (entry.maxScore > 0 ? Math.min(10, (entry.totalScore / entry.maxScore) * 10) : 0) : 0
+      if (!entry || entry.maxScore === 0) {
+        const appStageId = applicationStageByAppStageKey.get(key)
+        if (appStageId && runScoresByAppStage.has(appStageId)) {
+          score = runScoresByAppStage.get(appStageId) || 0
+        }
+      }
 
       return {
         stage_id: stage.id,

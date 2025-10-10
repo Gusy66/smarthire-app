@@ -368,9 +368,31 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Etapas da Vaga</h1>
-        <p className="text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Etapas da Vaga</h1>
+          <p className="text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
+        </div>
+        {jobId && (
+          <button
+            className="btn btn-danger"
+            onClick={async()=>{
+              if(!confirm('Excluir esta vaga e todas as etapas/candidaturas relacionadas?')) return
+              const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' })
+              if(!res.ok){
+                const t = await res.text();
+                let msg = 'Falha ao excluir a vaga'
+                try{ const j = t ? JSON.parse(t) : null; msg = j?.error?.message || msg }catch{}
+                notify({ title: 'Erro', description: msg, variant: 'error' })
+                return
+              }
+              notify({ title: 'Vaga excluída', variant: 'success' })
+              window.location.href = '/jobs'
+            }}
+          >
+            🗑️ Excluir vaga
+          </button>
+        )}
       </div>
 
       {/* Criar Nova Etapa */}
@@ -378,39 +400,51 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Criar Nova Etapa</h2>
         <form onSubmit={createStage} className="grid gap-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <input
-              value={stageForm.name}
-              onChange={(e) => setStageForm((f) => ({ ...f, name: e.target.value }))}
-              placeholder="Nome da etapa"
-              className="border rounded px-3 py-2"
-              required
-            />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-700">Nome da etapa</label>
               <input
-                type="number"
-                step="0.01"
-                value={stageForm.threshold}
-                onChange={(e) => setStageForm((f) => ({ ...f, threshold: Number(e.target.value) }))}
-                placeholder="Threshold"
+                value={stageForm.name}
+                onChange={(e) => setStageForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="Ex.: Triagem de currículo"
                 className="border rounded px-3 py-2"
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={stageForm.stage_weight}
-                onChange={(e) => setStageForm((f) => ({ ...f, stage_weight: Number(e.target.value) }))}
-                placeholder="Peso"
-                className="border rounded px-3 py-2"
+                required
               />
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-gray-700">Threshold (nota mínima para aprovar)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={stageForm.threshold}
+                  onChange={(e) => setStageForm((f) => ({ ...f, threshold: Number(e.target.value) }))}
+                  placeholder="0–10 (ex.: 7.0)"
+                  className="border rounded px-3 py-2"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-gray-700">Peso da etapa (importância na média)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={stageForm.stage_weight}
+                  onChange={(e) => setStageForm((f) => ({ ...f, stage_weight: Number(e.target.value) }))}
+                  placeholder="ex.: 1.0 (2.0 vale o dobro)"
+                  className="border rounded px-3 py-2"
+                />
+              </div>
+            </div>
           </div>
-          <textarea
-            value={stageForm.description}
-            onChange={(e) => setStageForm((f) => ({ ...f, description: e.target.value }))}
-            placeholder="Descrição detalhada da etapa"
-            className="border rounded px-3 py-2"
-            rows={3}
-          />
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-700">Descrição da etapa</label>
+            <textarea
+              value={stageForm.description}
+              onChange={(e) => setStageForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder="Conteúdo/objetivo da etapa e o que a IA deve considerar"
+              className="border rounded px-3 py-2"
+              rows={3}
+            />
+          </div>
           <button disabled={creating} className="btn btn-primary w-fit">
             {creating ? 'Criando...' : 'Adicionar etapa'}
           </button>
