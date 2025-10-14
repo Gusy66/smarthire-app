@@ -14,41 +14,37 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: { code: 'validation_error', message: 'API key e modelo são obrigatórios' } }, { status: 400 })
     }
 
-    // Testar conexão com OpenAI
-    const testResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    // Testar conexão via Serviço de IA (executa no mesmo ambiente da IA em produção)
+    const aiBaseUrl = process.env.NEXT_PUBLIC_AI_BASE_URL || 'http://localhost:8000'
+    const testResponse = await fetch(`${aiBaseUrl}/v1/test-config`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openai_api_key}`,
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: model,
-        messages: [
-          {
-            role: 'user',
-            content: 'Teste de conexão. Responda apenas "OK" se recebeu esta mensagem.'
-          }
-        ],
+        openai_api_key,
+        model,
+        temperature: 0,
         max_tokens: 10,
-        temperature: 0
-      })
+      }),
     })
 
     if (!testResponse.ok) {
-      const errorData = await testResponse.json()
-      return Response.json({ 
-        error: { 
-          code: 'openai_error', 
-          message: errorData.error?.message || 'Erro ao conectar com OpenAI' 
-        } 
-      }, { status: 400 })
+      const errorData = await testResponse.json().catch(() => null)
+      return Response.json(
+        {
+          error: {
+            code: 'ai_service_error',
+            message: errorData?.error?.message || 'Erro ao validar configuração no serviço de IA',
+          },
+        },
+        { status: testResponse.status }
+      )
     }
 
     const testData = await testResponse.json()
     
     return Response.json({ 
       success: true, 
-      message: 'Conexão estabelecida com sucesso',
+      message: 'Conexão estabelecida com sucesso (serviço de IA)',
       model: testData.model,
       usage: testData.usage
     })

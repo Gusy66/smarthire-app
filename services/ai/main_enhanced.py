@@ -838,6 +838,7 @@ async def get_user_ai_config(user_id: str) -> AIConfig:
     env_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     env_temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
     env_max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "2000"))
+    require_user_key = os.getenv("AI_REQUIRE_USER_KEY", "false").lower() in ("1", "true", "yes", "y")
 
     supabase_url = os.getenv("SUPABASE_URL")
     service_role = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -845,7 +846,10 @@ async def get_user_ai_config(user_id: str) -> AIConfig:
     print(f"[IA] ========== VARIÁVEIS DE AMBIENTE ==========")
     print(f"[IA] SUPABASE_URL: {supabase_url}")
     print(f"[IA] SUPABASE_SERVICE_ROLE_KEY: {'CONFIGURADO' if service_role else 'VAZIO'}")
-    print(f"[IA] OPENAI_API_KEY ambiente: {env_api_key[:15] + '...' if env_api_key else 'VAZIO'}")
+    print(f"[IA] OPENAI_API_KEY ambiente: {env_api_key[:6] + '...' if env_api_key else 'VAZIO'}")
+    print(f"[IA] AI_REQUIRE_USER_KEY: {'ON' if require_user_key else 'OFF'}")
+
+    config_source = "none"  # user | env | none
 
     # Tentar buscar configurações do banco de dados
     if supabase_url and service_role and user_id and user_id != "default":
@@ -886,12 +890,13 @@ async def get_user_ai_config(user_id: str) -> AIConfig:
                         if api_key_raw:
                             try:
                                 decoded_key = base64.b64decode(api_key_raw).decode('utf-8')
-                                print(f"[IA] Chave API decodificada com sucesso: {decoded_key[:15]}...")
+                                print(f"[IA] Chave API decodificada com sucesso: {decoded_key[:6]}...")
 
                                 # Validar se a chave parece válida (não é vazia após decodificar)
                                 if decoded_key and decoded_key.strip():
                                     env_api_key = decoded_key.strip()
                                     print(f"[IA] ✅ Chave API válida atribuída do banco de dados")
+                                    config_source = "user"
                                 else:
                                     print(f"[IA] ❌ Chave API decodificada está vazia")
 
@@ -937,15 +942,22 @@ async def get_user_ai_config(user_id: str) -> AIConfig:
         if not user_id or user_id == "default":
             print(f"[IA] ❌ User ID inválido: {user_id}")
 
+    # Aplicar política: exigir chave do usuário quando flag está ON
+    if require_user_key and config_source != "user":
+        # Desativar uso de OPENAI_API_KEY de ambiente
+        env_api_key = ""
+        print("[IA] 🔒 AI_REQUIRE_USER_KEY=ON → desativando fallback de OPENAI_API_KEY de ambiente")
+        config_source = "none"
+
     # Validação final da configuração
     print(f"[IA] ========== CONFIGURAÇÃO FINAL ==========")
     print(f"[IA] Modelo: {env_model}")
     print(f"[IA] Temperature: {env_temperature}")
     print(f"[IA] Max Tokens: {env_max_tokens}")
-    print(f"[IA] Chave API configurada: {'✅ SIM' if env_api_key and env_api_key.strip() else '❌ NÃO'}")
+    print(f"[IA] Chave API configurada: {'✅ SIM' if env_api_key and env_api_key.strip() else '❌ NÃO'} (source={config_source})")
 
     if env_api_key and env_api_key.strip():
-        print(f"[IA] Chave API (primeiros 15 chars): {env_api_key[:15]}...")
+        print(f"[IA] Chave API (prefixo): {env_api_key[:6]}...")
     else:
         print(f"[IA] ❌ ATENÇÃO: Chave API não configurada - análise será simulada")
 
