@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { getSupabaseBrowser } from '@/lib/supabaseBrowser'
 
 type Overview = {
   jobs_created_by_user: number
@@ -24,19 +23,19 @@ function formatRelative(date?: string): string {
 }
 
 export default function DashboardPage() {
-  const supabase = getSupabaseBrowser()
   const [userName, setUserName] = useState<string>('')
   const [overview, setOverview] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      const email = data.user?.email || ''
-      const fullName = (data.user as any)?.user_metadata?.full_name || ''
-      const first = fullName?.split(' ')[0] || email.split('@')[0] || 'Usuário'
-      setUserName(first.charAt(0).toUpperCase() + first.slice(1))
-    })
-  }, [supabase])
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => {
+        const preferred = (typeof j?.name === 'string' && j.name.trim().length > 0) ? j.name.trim() : null
+        setUserName(preferred || 'Usuário')
+      })
+      .catch(() => setUserName('Usuário'))
+  }, [])
 
   async function loadOverview() {
     setLoading(true)
@@ -65,31 +64,31 @@ export default function DashboardPage() {
       </div>
 
       {/* Cards principais */}
-      <div className="grid md:grid-cols-2 gap-4">
-        <div className="card p-5">
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="card p-8">
           <div className="text-sm text-gray-600">Vagas criadas por você</div>
-          <div className="text-3xl font-semibold mt-1">{overview?.jobs_created_by_user ?? (loading ? '…' : 0)}</div>
+          <div className="text-4xl font-semibold mt-2">{overview?.jobs_created_by_user ?? (loading ? '…' : 0)}</div>
           <div className="text-xs text-gray-500 mt-1">últimos 90 dias</div>
         </div>
-        <div className="card p-5">
+        <div className="card p-8">
           <div className="text-sm text-gray-600">Candidatos cadastrados por você</div>
-          <div className="text-3xl font-semibold mt-1">{overview?.candidates_created_by_user ?? (loading ? '…' : 0)}</div>
+          <div className="text-4xl font-semibold mt-2">{overview?.candidates_created_by_user ?? (loading ? '…' : 0)}</div>
           <div className="text-xs text-gray-500 mt-1">contagem total</div>
         </div>
       </div>
 
       {/* Vagas Recentes */}
       <div className="card p-0">
-        <div className="px-5 py-4 border-b">
+        <div className="px-6 py-5 border-b">
           <h2 className="text-lg font-semibold">Vagas Recentes</h2>
           <div className="text-xs text-gray-500">Suas vagas mais ativas</div>
         </div>
-        <div className="p-4 space-y-3">
+        <div className="p-6 space-y-4">
           {(overview?.recent_jobs?.length ?? 0) === 0 ? (
             <div className="text-gray-600 text-sm">Nenhuma vaga recente</div>
           ) : (
             overview!.recent_jobs.map((j) => (
-              <a key={j.id} href={`/jobs/${j.id}/stages`} className="block border rounded-xl px-4 py-3 hover:bg-gray-50 transition-colors">
+              <a key={j.id} href={`/jobs/${j.id}/stages`} className="block border rounded-xl px-5 py-4 hover:bg-gray-50 transition-colors">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="font-medium text-gray-900">{j.title}</div>
@@ -104,29 +103,29 @@ export default function DashboardPage() {
       </div>
 
       {/* Ações Rápidas */}
-      <div className="card p-6">
-        <h3 className="text-lg font-semibold mb-4">Ações Rápidas</h3>
-        <div className="grid md:grid-cols-3 gap-4">
-          <a href="/jobs" className="border rounded-xl p-6 hover:bg-gray-50 transition-colors flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center">+
+      <div className="card p-8">
+        <h3 className="text-xl font-semibold mb-5">Ações Rápidas</h3>
+        <div className="grid md:grid-cols-3 gap-5">
+          <a href="/jobs" className="border rounded-xl p-7 hover:bg-gray-50 transition-colors flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-green-100 text-green-700 flex items-center justify-center">+
             </div>
             <div>
               <div className="font-medium">Nova Vaga</div>
               <div className="text-xs text-gray-600">Crie uma nova posição</div>
             </div>
           </a>
-          <a href="/candidates" className="border rounded-xl p-6 hover:bg-gray-50 transition-colors flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <a href="/candidates" className="border rounded-xl p-7 hover:bg-gray-50 transition-colors flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-6 h-6"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             </div>
             <div>
               <div className="font-medium">Buscar Candidatos</div>
               <div className="text-xs text-gray-600">Gerencie o pipeline</div>
             </div>
           </a>
-          <a href="/reports" className="border rounded-xl p-6 hover:bg-gray-50 transition-colors flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>
+          <a href="/reports" className="border rounded-xl p-7 hover:bg-gray-50 transition-colors flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-6 h-6"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>
             </div>
             <div>
               <div className="font-medium">Relatórios</div>

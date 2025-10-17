@@ -1,12 +1,16 @@
 'use client'
 
+import Image from 'next/image'
 import AuthStatus from '@/components/AuthStatus'
 
 export default function Sidebar() {
   return (
     <aside className="hidden md:flex md:flex-col w-64 border-r border-gray-200 bg-white/95 backdrop-blur min-h-screen sticky top-0">
       <div className="h-16 flex items-center px-5 border-b">
-        <a href="/" className="font-bold text-2xl text-gradient">SmartHire</a>
+        <a href="/" className="font-bold text-2xl text-gradient flex items-center gap-2">
+          <span>SmartHire</span>
+          <Image src="/cerebro.png" alt="Ícone" width={24} height={24} />
+        </a>
       </div>
       <nav className="flex-1 p-4 space-y-1">
         <a href="/dashboard" className="nav-link block">Dashboard</a>

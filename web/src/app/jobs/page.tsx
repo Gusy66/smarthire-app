@@ -86,10 +86,10 @@ export default function JobsPage() {
     <div className="min-h-screen bg-gradient py-8">
       <div className="container-page space-y-8">
         {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Gerenciar Vagas</h1>
-            <p className="text-gray-600 mt-2">Gerencie todas as suas vagas em um só lugar</p>
+            <h1 className="text-4xl font-bold text-gray-900">Gerenciar Vagas</h1>
+            <p className="text-gray-600 mt-3">Gerencie todas as suas vagas em um só lugar</p>
           </div>
           <div className="flex items-center gap-3">
             <a href="/candidates" className="btn btn-outline">👥 Candidatos</a>
@@ -98,20 +98,20 @@ export default function JobsPage() {
         </div>
 
         {/* Cards de métricas */}
-        <div className="grid md:grid-cols-3 gap-4">
-          <div className="card p-5">
+        <div className="grid md:grid-cols-3 gap-6">
+          <div className="card p-7">
             <div className="text-sm text-gray-600">Total de Vagas</div>
-            <div className="text-3xl font-semibold mt-1">{stats?.total_jobs ?? '—'}</div>
+            <div className="text-4xl font-semibold mt-2">{stats?.total_jobs ?? '—'}</div>
             <div className="text-xs text-gray-500 mt-1">+2 esta semana</div>
           </div>
-          <div className="card p-5">
+          <div className="card p-7">
             <div className="text-sm text-gray-600">Vagas Ativas</div>
-            <div className="text-3xl font-semibold mt-1">{stats?.active_jobs ?? '—'}</div>
+            <div className="text-4xl font-semibold mt-2">{stats?.active_jobs ?? '—'}</div>
             <div className="text-xs text-green-600 mt-1">Recebendo candidatos</div>
           </div>
-          <div className="card p-5">
+          <div className="card p-7">
             <div className="text-sm text-gray-600">Total de Candidatos</div>
-            <div className="text-3xl font-semibold mt-1">{stats?.total_candidates ?? '—'}</div>
+            <div className="text-4xl font-semibold mt-2">{stats?.total_candidates ?? '—'}</div>
             <div className="text-xs text-gray-500 mt-1">Across all jobs</div>
           </div>
         </div>
@@ -142,8 +142,8 @@ export default function JobsPage() {
         )}
 
         {/* Filtros */}
-        <div className="card p-5">
-          <div className="flex flex-col md:flex-row gap-3 items-center">
+          <div className="card p-7">
+          <div className="flex flex-col md:flex-row gap-4 items-center">
             <input 
               value={search}
               onChange={(e)=>setSearch(e.target.value)}
@@ -161,8 +161,8 @@ export default function JobsPage() {
 
         {/* Lista de Vagas */}
         <div className="card p-0 overflow-x-auto">
-          <div className="px-5 py-4 border-b">
-            <h2 className="text-lg font-semibold">Lista de Vagas</h2>
+          <div className="px-8 py-6 border-b">
+            <h2 className="text-2xl font-semibold">Lista de Vagas</h2>
             <div className="text-xs text-gray-500 mt-1">{total} vaga(s) encontrada(s)</div>
           </div>
           {(error || jobs.length === 0) ? (

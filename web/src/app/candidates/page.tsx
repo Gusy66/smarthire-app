@@ -74,41 +74,41 @@ export default function CandidatesPage() {
   return (
     <div className="space-y-6">
       {/* Header e ações */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Gerenciar Candidatos</h1>
-          <p className="text-gray-600 text-sm">Acompanhe todos os candidatos em seu pipeline</p>
+          <h1 className="text-4xl font-semibold">Gerenciar Candidatos</h1>
+          <p className="text-gray-600 text-base">Acompanhe todos os candidatos em seu pipeline</p>
         </div>
         <a href="/jobs" className="btn btn-outline">Voltar às Vagas</a>
       </div>
 
       {/* Cards de métricas (placeholders simples) */}
-      <div className="grid md:grid-cols-4 gap-4">
-        <div className="card p-5">
+      <div className="grid md:grid-cols-4 gap-6">
+        <div className="card p-7">
           <div className="text-sm text-gray-600">Total de Candidatos</div>
-          <div className="text-3xl font-semibold mt-1">{total}</div>
+          <div className="text-4xl font-semibold mt-2">{total}</div>
           <div className="text-xs text-gray-500 mt-1">+12 esta semana</div>
         </div>
-        <div className="card p-5">
+        <div className="card p-7">
           <div className="text-sm text-gray-600">Novos Candidatos</div>
-          <div className="text-3xl font-semibold mt-1">—</div>
+          <div className="text-4xl font-semibold mt-2">—</div>
           <div className="text-xs text-gray-500 mt-1">Aguardando triagem</div>
         </div>
-        <div className="card p-5">
+        <div className="card p-7">
           <div className="text-sm text-gray-600">Em Processo</div>
-          <div className="text-3xl font-semibold mt-1">—</div>
+          <div className="text-4xl font-semibold mt-2">—</div>
           <div className="text-xs text-gray-500 mt-1">Em diferentes etapas</div>
         </div>
-        <div className="card p-5">
+        <div className="card p-7">
           <div className="text-sm text-gray-600">Contratados</div>
-          <div className="text-3xl font-semibold mt-1">—</div>
+          <div className="text-4xl font-semibold mt-2">—</div>
           <div className="text-xs text-gray-500 mt-1">Este mês</div>
         </div>
       </div>
 
       {/* Form rápido para novo candidato */}
-      <form onSubmit={onSubmit} className="card p-4 grid gap-3 max-w-3xl">
-        <div className="grid md:grid-cols-3 gap-3">
+      <form onSubmit={onSubmit} className="card p-7 grid gap-4 max-w-4xl">
+        <div className="grid md:grid-cols-3 gap-4">
           <input value={form.name} onChange={(e)=>setForm((f)=>({ ...f, name: e.target.value }))} placeholder="Nome" className="border rounded px-3 py-2" required />
           <input value={form.email} onChange={(e)=>setForm((f)=>({ ...f, email: e.target.value }))} type="email" placeholder="E-mail" className="border rounded px-3 py-2" />
           <input value={form.phone} onChange={(e)=>setForm((f)=>({ ...f, phone: e.target.value }))} placeholder="Telefone" className="border rounded px-3 py-2" />
@@ -119,17 +119,17 @@ export default function CandidatesPage() {
       </form>
 
       {/* Filtros */}
-      <div className="card p-5">
-        <div className="flex items-center gap-3">
-          <input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Buscar candidatos..." className="border rounded px-3 py-2 w-full max-w-xl" />
+      <div className="card p-7">
+        <div className="flex items-center gap-4">
+          <input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Buscar candidatos..." className="border rounded px-3 py-2 w-full max-w-2xl" />
           <button onClick={()=>{ setPage(1); load() }} className="btn btn-outline">Buscar</button>
         </div>
       </div>
 
       {/* Tabela de candidatos */}
       <div className="card p-0 overflow-x-auto">
-        <div className="px-5 py-4 border-b">
-          <h2 className="text-lg font-semibold">Lista de Candidatos</h2>
+        <div className="px-8 py-6 border-b">
+          <h2 className="text-2xl font-semibold">Lista de Candidatos</h2>
           <div className="text-xs text-gray-500 mt-1">{candidates.length} candidato(s) encontrado(s)</div>
         </div>
         <table className="w-full text-sm">
