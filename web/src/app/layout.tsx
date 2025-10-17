@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ToastProvider from "@/components/ToastProvider";
-import NavBar from "@/components/NavBar";
+import Sidebar from "@/components/Sidebar";
 import AuthSessionSync from "@/components/AuthSessionSync";
 
 const geistSans = Geist({
@@ -29,11 +29,15 @@ export default function RootLayout({
     <html lang="pt-BR" className="h-full">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}>
         <AuthSessionSync />
-        <NavBar />
         <ToastProvider>
-          <main className="container-page py-6">
-            {children}
-          </main>
+          <div className="flex min-h-screen">
+            <Sidebar />
+            <main className="flex-1 py-6 px-4 md:px-8">
+              <div className="container-page max-w-none">
+                {children}
+              </div>
+            </main>
+          </div>
         </ToastProvider>
       </body>
     </html>

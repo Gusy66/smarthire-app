@@ -15,11 +15,18 @@ export async function GET(req: NextRequest) {
   const search = (searchParams.get('search') || '').trim()
   const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10))
   const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('page_size') || '20', 10)))
+  const status = (searchParams.get('status') || '').trim()
   const from = (page - 1) * pageSize
   const to = from + pageSize - 1
 
-  let query = supabase.from('jobs').select('*', { count: 'exact' })
+  // inclui contagem de candidaturas por vaga via sub-seleção
+  let query = supabase
+    .from('jobs')
+    .select('id, company_id, title, description, location, status, created_at, applications:applications(count)', { count: 'exact' })
     .eq('company_id', user.company_id)
+  if (status && ['open', 'closed'].includes(status)) {
+    query = query.eq('status', status as 'open' | 'closed')
+  }
   if (search) {
     const term = `%${search}%`
     query = query.or(
@@ -30,7 +37,12 @@ export async function GET(req: NextRequest) {
 
   const { data, error, count } = await query
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
-  return Response.json({ items: data ?? [], page, page_size: pageSize, total: count ?? data?.length ?? 0 })
+  // normaliza applications_count para o frontend
+  const items = (data ?? []).map((row: any) => ({
+    ...row,
+    applications_count: Array.isArray(row.applications) && row.applications[0] && typeof row.applications[0].count === 'number' ? row.applications[0].count : 0,
+  }))
+  return Response.json({ items, page, page_size: pageSize, total: count ?? items.length })
 }
 
 export async function POST(req: NextRequest) {
