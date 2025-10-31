@@ -12,18 +12,38 @@ type Candidate = {
   latest_job_title?: string | null;
   latest_activity_at?: string | null;
   avg_score?: number | null;
+  latest_stage_id?: string | null;
+  latest_stage_name?: string | null;
 }
 
 export default function CandidatesPage() {
   const { notify } = useToast()
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({ name: '', email: '', phone: '' })
+  const [form, setForm] = useState({ 
+    name: '', 
+    email: '', 
+    phone: '', 
+    job_id: '', 
+    stage_id: '', 
+    city: '', 
+    state: '', 
+    address: '', 
+    children: '', 
+    gender: '', 
+    languages: [] as string[], 
+    education: '',
+    resumeFile: null as File | null
+  })
+  const [languageInput, setLanguageInput] = useState('')
+  const [uploadingResume, setUploadingResume] = useState(false)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const pageSize = 20
   const [selected, setSelected] = useState<Candidate | null>(null)
+  const [availableJobs, setAvailableJobs] = useState<{id: string; title: string}[]>([])
+  const [availableStages, setAvailableStages] = useState<{id: string; name: string}[]>([])
 
   async function load() {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
@@ -41,16 +61,121 @@ export default function CandidatesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page])
 
+  useEffect(() => {
+    fetch('/api/jobs?page=1&page_size=100', { credentials: 'same-origin' })
+      .then((r) => r.json())
+      .then((j) => setAvailableJobs(j.items || []))
+      .catch(() => setAvailableJobs([]))
+  }, [])
+
+  useEffect(() => {
+    if (!form.job_id) { setAvailableStages([]); setForm((f)=>({ ...f, stage_id: '' })); return }
+    fetch(`/api/jobs/${form.job_id}/stages`, { credentials: 'same-origin' })
+      .then((r) => r.json())
+      .then((j) => setAvailableStages(j.items || []))
+      .catch(() => setAvailableStages([]))
+  }, [form.job_id])
+
+  async function uploadResume(file: File): Promise<{ path: string; bucket: string } | null> {
+    setUploadingResume(true)
+    try {
+      // Validação de tamanho (camada de segurança adicional)
+      const maxSize = 10 * 1024 * 1024 // 10MB
+      if (file.size > maxSize) {
+        notify({ title: 'Arquivo muito grande', description: `O arquivo deve ter no máximo 10MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
+        return null
+      }
+      
+      const contentType = file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 
+        file.name.endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
+        file.name.endsWith('.doc') ? 'application/msword' : 'application/pdf')
+      
+      const uploadRes = await fetch('/api/uploads/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ filename: file.name, content_type: contentType }),
+      })
+      
+      if (!uploadRes.ok) {
+        throw new Error('Erro ao obter URL de upload')
+      }
+      
+      const { upload_url, path, bucket } = await uploadRes.json()
+      
+      // Fazer upload do arquivo
+      const fileRes = await fetch(upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType },
+        body: file,
+      })
+      
+      if (!fileRes.ok) {
+        throw new Error('Erro ao fazer upload do arquivo')
+      }
+      
+      // Extrair apenas o nome do arquivo do path
+      const pathParts = path.split('/')
+      const fileName = pathParts[pathParts.length - 1]
+      
+      return { path: fileName, bucket }
+    } catch (error) {
+      console.error('Erro no upload:', error)
+      notify({ title: 'Erro ao fazer upload do CV', description: error instanceof Error ? error.message : 'Erro desconhecido', variant: 'error' })
+      return null
+    } finally {
+      setUploadingResume(false)
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     try {
+      // Validar campos obrigatórios
+      if (!form.name || !form.email || !form.phone || !form.job_id || !form.stage_id) {
+        notify({ title: 'Campos obrigatórios', description: 'Preencha todos os campos obrigatórios (Nome, E-mail, Telefone, Vaga e Etapa)', variant: 'error' })
+        setLoading(false)
+        return
+      }
+      
+      if (!form.resumeFile) {
+        notify({ title: 'CV obrigatório', description: 'É necessário anexar um currículo', variant: 'error' })
+        setLoading(false)
+        return
+      }
+      
+      // Fazer upload do CV primeiro
+      const resumeData = await uploadResume(form.resumeFile)
+      if (!resumeData) {
+        setLoading(false)
+        return
+      }
+      
+      const payload = {
+        name: form.name,
+        email: form.email,
+        phone: form.phone,
+        city: form.city || null,
+        state: form.state || null,
+        address: form.address || null,
+        children: form.children ? parseInt(form.children) : null,
+        gender: form.gender || null,
+        languages: form.languages,
+        education: form.education || null,
+        resume_path: resumeData.path,
+        resume_bucket: resumeData.bucket,
+        job_id: form.job_id,
+        stage_id: form.stage_id,
+      }
+      
       const res = await fetch('/api/candidates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       })
+      
       if (!res.ok) {
         const text = await res.text()
         let message = res.statusText || 'Erro ao criar candidato'
@@ -61,9 +186,12 @@ export default function CandidatesPage() {
         notify({ title: 'Erro ao criar candidato', description: message, variant: 'error' })
         return
       }
-      setForm({ name: '', email: '', phone: '' })
+      
+      const candidateId = (await res.json()).id
+      setForm({ name: '', email: '', phone: '', job_id: '', stage_id: '', city: '', state: '', address: '', children: '', gender: '', languages: [], education: '', resumeFile: null })
+      setLanguageInput('')
       await load()
-      notify({ title: 'Candidato criado', variant: 'success' })
+      notify({ title: 'Candidato criado e atribuído', variant: 'success' })
     } finally {
       setLoading(false)
     }
@@ -106,15 +234,141 @@ export default function CandidatesPage() {
         </div>
       </div>
 
-      {/* Form rápido para novo candidato */}
+      {/* Form completo para novo candidato */}
       <form onSubmit={onSubmit} className="card p-7 grid gap-4 max-w-4xl">
-        <div className="grid md:grid-cols-3 gap-4">
-          <input value={form.name} onChange={(e)=>setForm((f)=>({ ...f, name: e.target.value }))} placeholder="Nome" className="border rounded px-3 py-2" required />
-          <input value={form.email} onChange={(e)=>setForm((f)=>({ ...f, email: e.target.value }))} type="email" placeholder="E-mail" className="border rounded px-3 py-2" />
-          <input value={form.phone} onChange={(e)=>setForm((f)=>({ ...f, phone: e.target.value }))} placeholder="Telefone" className="border rounded px-3 py-2" />
+        <h2 className="text-xl font-semibold mb-2">Cadastrar Novo Candidato</h2>
+        
+        {/* Campos obrigatórios */}
+        <div className="border-t pt-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Informações Obrigatórias</h3>
+          <div className="grid md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Nome *</label>
+              <input value={form.name} onChange={(e)=>setForm((f)=>({ ...f, name: e.target.value }))} placeholder="Nome completo" className="border rounded px-3 py-2 w-full" required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">E-mail *</label>
+              <input value={form.email} onChange={(e)=>setForm((f)=>({ ...f, email: e.target.value }))} type="email" placeholder="email@exemplo.com" className="border rounded px-3 py-2 w-full" required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Telefone *</label>
+              <input value={form.phone} onChange={(e)=>setForm((f)=>({ ...f, phone: e.target.value }))} placeholder="(00) 00000-0000" className="border rounded px-3 py-2 w-full" required />
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4 mt-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Vaga *</label>
+              <select value={form.job_id} onChange={(e)=>setForm((f)=>({ ...f, job_id: e.target.value, stage_id: '' }))} className="w-full border rounded px-3 py-2" required>
+                <option value="">Selecione a vaga</option>
+                {availableJobs.map((j)=> <option key={j.id} value={j.id}>{j.title}</option>)}
+              </select>
+            </div>
+            {form.job_id && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Etapa *</label>
+                <select value={form.stage_id} onChange={(e)=>setForm((f)=>({ ...f, stage_id: e.target.value }))} className="w-full border rounded px-3 py-2" required>
+                  <option value="">Selecione a etapa</option>
+                  {availableStages.map((s)=> <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">CV (Anexo) *</label>
+            <input 
+              type="file" 
+              accept=".pdf,.doc,.docx"
+              onChange={(e)=>{
+                const file = e.target.files?.[0] || null
+                if (file) {
+                  const maxSize = 10 * 1024 * 1024 // 10MB
+                  if (file.size > maxSize) {
+                    notify({ title: 'Arquivo muito grande', description: `O arquivo deve ter no máximo 10MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
+                    e.target.value = ''
+                    return
+                  }
+                }
+                setForm((f)=>({ ...f, resumeFile: file }))
+              }} 
+              className="border rounded px-3 py-2 w-full" 
+              required 
+            />
+            {form.resumeFile && (
+              <p className="text-sm text-gray-600 mt-1">
+                Arquivo: {form.resumeFile.name} ({(form.resumeFile.size / 1024 / 1024).toFixed(2)}MB)
+              </p>
+            )}
+            <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 10MB</p>
+          </div>
         </div>
-        <div>
-          <button disabled={loading} className="btn btn-primary">{loading ? 'Adicionando...' : 'Adicionar candidato'}</button>
+
+        {/* Campos opcionais */}
+        <div className="border-t pt-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Informações Opcionais</h3>
+          <div className="grid md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Cidade</label>
+              <input value={form.city} onChange={(e)=>setForm((f)=>({ ...f, city: e.target.value }))} placeholder="Cidade" className="border rounded px-3 py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Estado</label>
+              <input value={form.state} onChange={(e)=>setForm((f)=>({ ...f, state: e.target.value }))} placeholder="Estado" className="border rounded px-3 py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Filhos</label>
+              <input type="number" min="0" value={form.children} onChange={(e)=>setForm((f)=>({ ...f, children: e.target.value }))} placeholder="Número de filhos" className="border rounded px-3 py-2 w-full" />
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4 mt-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Endereço</label>
+              <input value={form.address} onChange={(e)=>setForm((f)=>({ ...f, address: e.target.value }))} placeholder="Endereço completo" className="border rounded px-3 py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Sexo</label>
+              <select value={form.gender} onChange={(e)=>setForm((f)=>({ ...f, gender: e.target.value }))} className="w-full border rounded px-3 py-2">
+                <option value="">Selecione</option>
+                <option value="Masculino">Masculino</option>
+                <option value="Feminino">Feminino</option>
+                <option value="Outro">Outro</option>
+              </select>
+            </div>
+          </div>
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Idiomas</label>
+            <input 
+              value={languageInput} 
+              onChange={(e)=>setLanguageInput(e.target.value)} 
+              onKeyDown={(e)=>{
+                if(e.key==='Enter'){
+                  e.preventDefault()
+                  const v = languageInput.trim()
+                  if(v) setForm((f)=>({ ...f, languages: [...f.languages, v] }))
+                  setLanguageInput('')
+                }
+              }}
+              placeholder="Digite um idioma e pressione Enter" 
+              className="border rounded px-3 py-2 w-full" 
+            />
+            <div className="flex flex-wrap gap-2 mt-2">
+              {form.languages.map((lang, i)=>(
+                <span key={i} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm flex items-center gap-2">
+                  {lang}
+                  <button type="button" onClick={()=>setForm((f)=>({ ...f, languages: f.languages.filter((_,idx)=>idx!==i) }))} className="text-blue-600 hover:text-blue-800">×</button>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Formação</label>
+            <textarea value={form.education} onChange={(e)=>setForm((f)=>({ ...f, education: e.target.value }))} placeholder="Descreva a formação do candidato" className="border rounded px-3 py-2 w-full h-24 resize-none" />
+          </div>
+        </div>
+
+        <div className="border-t pt-4">
+          <button disabled={loading || uploadingResume} className="btn btn-primary">
+            {loading || uploadingResume ? 'Salvando...' : 'Cadastrar Candidato'}
+          </button>
         </div>
       </form>
 
@@ -137,6 +391,7 @@ export default function CandidatesPage() {
             <tr className="border-b">
               <th className="py-3 px-5">Candidato</th>
               <th className="py-3 px-5">Vaga</th>
+              <th className="py-3 px-5">Etapa</th>
               <th className="py-3 px-5">Status</th>
               <th className="py-3 px-5">Score IA</th>
               <th className="py-3 px-5">Aplicado em</th>
@@ -152,33 +407,25 @@ export default function CandidatesPage() {
               return (
                 <tr key={c.id} className="border-b hover:bg-gray-50/50">
                   <td className="py-4 px-5">
-                    <div className="font-medium text-gray-900">{c.name}</div>
-                    <div className="text-xs text-gray-600">{c.email} {c.phone ? `• ${c.phone}` : ''}</div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold">{(c.name||c.id).slice(0,2).toUpperCase()}</div>
+                      <div>
+                        <div className="font-medium text-gray-900">{c.name}</div>
+                        <div className="text-xs text-gray-600">{c.email} {c.phone ? `• ${c.phone}` : ''}</div>
+                      </div>
+                    </div>
                   </td>
                   <td className="py-4 px-5">{c.latest_job_title ?? '—'}</td>
+                  <td className="py-4 px-5">{c.latest_stage_name ?? '—'}</td>
                   <td className="py-4 px-5"><span className="badge badge-info">—</span></td>
-                  <td className="py-4 px-5">
-                    {score == null ? (
-                      <span className="text-gray-500">—</span>
-                    ) : (
-                      <div className="flex items-center gap-3 w-40">
-                        <span className="font-medium">{Math.round(score)}%</span>
-                        <div className="progress-bar flex-1">
-                          <div className="progress-fill" style={{ width: `${Math.min(100, Math.max(0, Math.round(score)))}%` }} />
-                        </div>
-                      </div>
-                    )}
-                  </td>
+                  <td className="py-4 px-5">{score == null ? '—' : (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full bg-green-100 text-green-800 text-xs font-semibold">{Math.round(score)}%</span>
+                  )}</td>
                   <td className="py-4 px-5">{appliedAt ? appliedAt.toLocaleDateString('pt-BR') : '—'}</td>
                   <td className="py-4 px-5">{lastAct ? lastAct.toLocaleDateString('pt-BR') : '—'}</td>
                   <td className="py-4 px-5">
                     <div className="flex items-center gap-2 justify-end">
-                      <button
-                        className="p-2 rounded-full border border-gray-200 hover:bg-gray-100 transition-colors"
-                        title="Visualizar"
-                        onClick={()=>setSelected(c)}
-                        aria-label="Visualizar candidato"
-                      >
+                      <button className="p-2 rounded-full border border-gray-200 hover:bg-gray-100 transition-colors" title="Visualizar" onClick={()=>setSelected(c)}>
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-gray-700">
                           <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
                           <circle cx="12" cy="12" r="3" />

@@ -19,6 +19,13 @@ export async function POST(req: NextRequest, { params }: Params) {
   const body = await req.json()
   const { type, storage_path } = body || {}
   if (!type || !storage_path) return Response.json({ error: { code: 'validation_error', message: 'type e storage_path são obrigatórios' } }, { status: 400 })
+  
+  // Validar tipo permitido
+  const allowedTypes = ['resume', 'transcript', 'pdf', 'docx', 'doc', 'json']
+  if (!allowedTypes.includes(type)) {
+    return Response.json({ error: { code: 'validation_error', message: `Tipo de documento não permitido. Tipos permitidos: ${allowedTypes.join(', ')}` } }, { status: 400 })
+  }
+  
   const supabase = getSupabaseAdmin()
   const { data, error } = await supabase
     .from('stage_documents')

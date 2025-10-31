@@ -24,6 +24,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     transcript_path,
     transcript_bucket,
     transcript_signed_url,
+    // Novos tipos de documentos de etapa
+    document_path,
+    document_bucket,
+    document_signed_url,
+    document_type, // 'pdf', 'docx', 'doc', 'json'
   } = body || {}
   
   if (!application_id) {
@@ -81,6 +86,39 @@ export async function POST(req: NextRequest, { params }: Params) {
     promptTemplateContent = defaultTemplate?.content ?? null
   }
 
+  // Buscar documentos de etapa se document_path não foi fornecido diretamente
+  let finalDocumentPath = document_path
+  let finalDocumentBucket = document_bucket
+  let finalDocumentSignedUrl = document_signed_url
+  let finalDocumentType = document_type
+
+  if (!finalDocumentPath) {
+    // Buscar documentos anexados à etapa
+    const { data: stageDocs } = await supabase
+      .from('stage_documents')
+      .select('type, storage_path')
+      .eq('stage_id', stageId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (stageDocs && stageDocs.length > 0) {
+      const doc = stageDocs[0]
+      finalDocumentType = doc.type
+      const bucketMatch = doc.storage_path.match(/^([^/]+)\/(.+)$/)
+      if (bucketMatch) {
+        const [, bucket, path] = bucketMatch
+        finalDocumentBucket = bucket
+        finalDocumentPath = path
+        
+        // Gerar URL assinada
+        const { data: signedUrlData } = await supabase.storage
+          .from(bucket)
+          .createSignedUrl(path, 60 * 60)
+        finalDocumentSignedUrl = signedUrlData?.signedUrl || null
+      }
+    }
+  }
+
   const payload = {
     stage_id: stageId,
     application_id,
@@ -93,6 +131,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     transcript_path,
     transcript_bucket,
     transcript_signed_url,
+    // Novos campos para documentos de etapa
+    document_path: finalDocumentPath,
+    document_bucket: finalDocumentBucket,
+    document_signed_url: finalDocumentSignedUrl,
+    document_type: finalDocumentType,
     user_id: user.id,
     stage: {
       id: stage?.id,

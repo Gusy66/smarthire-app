@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 
   let query = supabase
     .from('candidates')
-    .select('id, name, email, phone, created_at, company_id, created_by', { count: 'exact' })
+    .select('id, name, email, phone, created_at, company_id, created_by, city, state, address, children, gender, languages, education, resume_path, resume_bucket', { count: 'exact' })
     .eq('company_id', user.company_id)
   if (search) {
     const term = `%${search}%`
@@ -44,6 +44,11 @@ export async function GET(req: NextRequest) {
     .in('candidate_id', candidateIds)
     .order('created_at', { ascending: false })
 
+  // mapeia última aplicação por candidato
+  const latestAppByCandidate = new Map<string, any>()
+  ;(apps ?? []).forEach((a) => { if (!latestAppByCandidate.has(a.candidate_id)) latestAppByCandidate.set(a.candidate_id, a) })
+  const latestAppIds = Array.from(latestAppByCandidate.values()).map((a: any) => a.id)
+
   const applicationIds = (apps ?? []).map((a) => a.id)
   const { data: interviews } = applicationIds.length
     ? await supabase
@@ -59,6 +64,28 @@ export async function GET(req: NextRequest) {
         .select('interview_id, value')
         .in('interview_id', interviewIds)
     : { data: [], error: null }
+
+  // etapa atual (ativa) da última aplicação
+  let stageNameByAppId = new Map<string, { id: string; name: string }>()
+  if (latestAppIds.length) {
+    const { data: appStages } = await supabase
+      .from('application_stages')
+      .select('application_id, stage_id, decided_at')
+      .in('application_id', latestAppIds)
+    const active = (appStages ?? []).filter((r) => !r.decided_at)
+    const stageIds = Array.from(new Set(active.map((r) => r.stage_id)))
+    if (stageIds.length) {
+      const { data: stages } = await supabase
+        .from('job_stages')
+        .select('id, name')
+        .in('id', stageIds)
+      const stageById = new Map((stages ?? []).map((s) => [s.id, s]))
+      active.forEach((r) => {
+        const st = stageById.get(r.stage_id)
+        if (st) stageNameByAppId.set(r.application_id, { id: st.id, name: st.name })
+      })
+    }
+  }
 
   const scoreByInterview = new Map<string, number[]>()
   ;(scores ?? []).forEach((s: any) => {
@@ -83,7 +110,7 @@ export async function GET(req: NextRequest) {
 
   const items = candidates.map((c) => {
     const cApps = appsByCandidate.get(c.id) ?? []
-    const latestApp = cApps[0] || null
+    const latestApp = latestAppByCandidate.get(c.id) || cApps[0] || null
     const cInterviews = cApps.flatMap((a) => interviewsByApplication.get(a.id) ?? [])
     const allScores = cInterviews.flatMap((iv) => scoreByInterview.get(iv.id) ?? [])
     const avg_score = allScores.length ? allScores.reduce((s, v) => s + v, 0) / allScores.length : null
@@ -92,9 +119,12 @@ export async function GET(req: NextRequest) {
       return !acc || (d && d > acc) ? d : acc
     }, null)
     const latest_activity_at = (latestInterviewDate?.toISOString()) || latestApp?.created_at || c.created_at
+    const latestStage = latestApp ? stageNameByAppId.get(latestApp.id) || null : null
     return {
       ...c,
       latest_job_title: latestApp?.jobs?.title ?? null,
+      latest_stage_id: latestStage?.id || null,
+      latest_stage_name: latestStage?.name || null,
       latest_activity_at,
       avg_score,
     }
@@ -105,8 +135,28 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { name, email, phone } = body || {}
-  if (!name) return Response.json({ error: { code: 'validation_error', message: 'name is required' } }, { status: 400 })
+  const { 
+    name, 
+    email, 
+    phone,
+    city,
+    state,
+    address,
+    children,
+    gender,
+    languages,
+    education,
+    resume_path,
+    resume_bucket,
+    job_id,
+    stage_id
+  } = body || {}
+  if (!name) return Response.json({ error: { code: 'validation_error', message: 'name é obrigatório' } }, { status: 400 })
+  if (!email) return Response.json({ error: { code: 'validation_error', message: 'email é obrigatório' } }, { status: 400 })
+  if (!phone) return Response.json({ error: { code: 'validation_error', message: 'telefone é obrigatório' } }, { status: 400 })
+  if (!job_id) return Response.json({ error: { code: 'validation_error', message: 'vaga é obrigatória' } }, { status: 400 })
+  if (!stage_id) return Response.json({ error: { code: 'validation_error', message: 'etapa é obrigatória' } }, { status: 400 })
+  if (!resume_path) return Response.json({ error: { code: 'validation_error', message: 'CV é obrigatório' } }, { status: 400 })
   const supabase = getSupabaseAdmin()
   let user
   try {
@@ -121,6 +171,15 @@ export async function POST(req: NextRequest) {
       name,
       email,
       phone,
+      city,
+      state,
+      address,
+      children: children ? parseInt(String(children)) : null,
+      gender,
+      languages: languages || [],
+      education,
+      resume_path,
+      resume_bucket,
       company_id: user.company_id,
       created_by: user.id,
     })
@@ -129,6 +188,32 @@ export async function POST(req: NextRequest) {
   if (error) {
     return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
   }
+
+  // Atribuir à vaga se fornecido
+  if (job_id && candidate.id) {
+    const { data: application, error: appError } = await supabase
+      .from('applications')
+      .insert({
+        candidate_id: candidate.id,
+        job_id: job_id,
+      })
+      .select('id')
+      .single()
+
+    if (appError) {
+      console.error('Erro ao criar aplicação:', appError)
+    } else if (application && stage_id) {
+      // Atribuir à etapa se fornecido
+      await supabase
+        .from('application_stages')
+        .insert({
+          application_id: application.id,
+          stage_id: stage_id,
+          status: 'pending',
+        })
+    }
+  }
+
   return Response.json({ id: candidate.id })
 }
 

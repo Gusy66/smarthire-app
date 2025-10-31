@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   // inclui contagem de candidaturas por vaga via sub-seleção
   let query = supabase
     .from('jobs')
-    .select('id, company_id, title, description, location, status, created_at, applications:applications(count)', { count: 'exact' })
+    .select('id, company_id, title, description, location, status, created_at, department, job_description, responsibilities, requirements_and_skills, work_schedule, travel_availability, observations, salary, work_model, contract_type, requirements, skills, benefits, applications:applications(count)', { count: 'exact' })
     .eq('company_id', user.company_id)
   if (status && ['open', 'closed'].includes(status)) {
     query = query.eq('status', status as 'open' | 'closed')
@@ -47,7 +47,25 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { title, description, location, status } = body || {}
+  const { 
+    title, 
+    description, 
+    location, 
+    status, 
+    salary, 
+    work_model, 
+    contract_type, 
+    requirements, 
+    skills, 
+    benefits,
+    department,
+    job_description,
+    responsibilities,
+    requirements_and_skills,
+    work_schedule,
+    travel_availability,
+    observations
+  } = body || {}
   if (!title) return Response.json({ error: { code: 'validation_error', message: 'title is required' } }, { status: 400 })
   // For MVP, attach to a default company. In production, derive from auth/session.
   const supabase = getSupabaseAdmin()
@@ -62,7 +80,27 @@ export async function POST(req: NextRequest) {
 
   const { data, error } = await supabase
     .from('jobs')
-    .insert({ title, description, location, status, company_id: companyId, created_by: user.id })
+    .insert({
+      title,
+      description,
+      location,
+      status,
+      salary,
+      work_model,
+      contract_type,
+      requirements: requirements || [],
+      skills: skills || [],
+      benefits: benefits || [],
+      department,
+      job_description,
+      responsibilities,
+      requirements_and_skills,
+      work_schedule,
+      travel_availability,
+      observations,
+      company_id: companyId,
+      created_by: user.id
+    })
     .select('id')
     .single()
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })

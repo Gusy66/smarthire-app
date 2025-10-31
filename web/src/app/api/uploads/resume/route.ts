@@ -1,14 +1,39 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../../_lib/supabaseAdmin'
 
+// Tipos de arquivo permitidos para currículos
+const ALLOWED_RESUME_TYPES = {
+  'application/pdf': 'pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/msword': 'doc',
+}
+
+// Tipos de arquivo permitidos para documentos de etapa
+const ALLOWED_STAGE_DOC_TYPES = {
+  ...ALLOWED_RESUME_TYPES,
+  'application/json': 'json',
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     console.log('[DEBUG] Upload resume request body:', body)
-    const { filename = 'resume.pdf', content_type = 'application/pdf' } = body || {}
-    console.log('[DEBUG] Upload resume params:', { filename, content_type })
+    const { filename = 'resume.pdf', content_type = 'application/pdf', for_stage = false } = body || {}
+    console.log('[DEBUG] Upload resume params:', { filename, content_type, for_stage })
+    
+    // Validar tipo de arquivo
+    const allowedTypes = for_stage ? ALLOWED_STAGE_DOC_TYPES : ALLOWED_RESUME_TYPES
+    if (!allowedTypes[content_type as keyof typeof allowedTypes]) {
+      return Response.json({ 
+        error: { 
+          code: 'invalid_file_type', 
+          message: `Tipo de arquivo não permitido. Tipos permitidos: ${Object.keys(allowedTypes).join(', ')}` 
+        } 
+      }, { status: 400 })
+    }
+    
     const supabase = getSupabaseAdmin()
-    const bucket = 'resumes'
+    const bucket = for_stage ? 'stage-documents' : 'resumes'
     const sanitized = sanitizeFilename(filename)
     const path = `${Date.now()}-${sanitized}`
     

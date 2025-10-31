@@ -1,9 +1,14 @@
 'use client'
 
 import Image from 'next/image'
+import { usePathname } from 'next/navigation'
 import AuthStatus from '@/components/AuthStatus'
 
 export default function Sidebar() {
+  const pathname = usePathname()
+  if (pathname?.startsWith('/jobs/new')) {
+    return null
+  }
   return (
     <aside className="hidden md:flex md:flex-col w-64 border-r border-gray-200 bg-white/95 backdrop-blur min-h-screen sticky top-0">
       <div className="h-16 flex items-center px-5 border-b">

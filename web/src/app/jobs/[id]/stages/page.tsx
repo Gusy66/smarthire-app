@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useToast } from '@/components/ToastProvider'
 import StageAnalysisPanel from './_components/StageAnalysisPanel'
+import JobStageHeader from './_components/JobStageHeader'
+import CandidatesTable from './_components/CandidatesTable'
+import BulkActions from './_components/BulkActions'
+import CandidatesFilters, { CandidateFilters as CF } from './_components/CandidatesFilters'
+import AnalysisSplitPane from './_components/AnalysisSplitPane'
 
 type Stage = { id: string; name: string; description: string | null; order_index: number; threshold: number; stage_weight: number }
 type Candidate = { id: string; name: string; email?: string }
@@ -110,6 +115,11 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [jobId, setJobId] = useState<string | null>(null)
   const [stages, setStages] = useState<Stage[]>([])
   const [creating, setCreating] = useState(false)
+  const [activeTab, setActiveTab] = useState<string | null>(null)
+  const [board, setBoard] = useState<{ lanes: Record<string, { application_id: string; application_stage_id: string; candidate: any; score: number | null }[]>, stages: Stage[] } | null>(null)
+  const [selectedForBulk, setSelectedForBulk] = useState<Record<string, boolean>>({})
+  const [filters, setFilters] = useState<CF>({ query: '' })
+  const [currentItem, setCurrentItem] = useState<{ application_id: string; application_stage_id: string; candidate: { id: string; name?: string } } | null>(null)
   const [stageForm, setStageForm] = useState({ name: '', description: '', threshold: 0, stage_weight: 1 })
   const [editingStageId, setEditingStageId] = useState<string | null>(null)
   const [editingStageForm, setEditingStageForm] = useState<{ name: string; description: string; threshold: number; stage_weight: number }>({ name: '', description: '', threshold: 0, stage_weight: 1 })
@@ -140,6 +150,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
 
       const { items } = await api<{ items: Stage[] }>(`/api/jobs/${id}/stages`)
       setStages(items)
+      setActiveTab(items[0]?.id || null)
       setAnalysisByStage((prev) => {
         const next: Record<string, StageAnalysisResult | null> = {}
         items.forEach((stage) => { next[stage.id] = prev[stage.id] ?? null })
@@ -160,6 +171,11 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       setCandidates(cand.items || [])
       const apps = await api<{ items: any[] }>(`/api/jobs/${id}/applications`).catch(() => ({ items: [] }))
       setApplications(apps.items || [])
+      // carregar board inicial
+      try {
+        const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${id}/board`)
+        setBoard(b as any)
+      } catch {}
       try {
         const pts = await fetchPromptTemplates()
         setPromptTemplates(pts)
@@ -174,7 +190,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     stages.forEach((s) => {
       if (!stagePromptMap.hasOwnProperty(s.id)) loadPromptForStage(s.id)
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [stages])
 
   async function loadPromptForStage(stageId: string) {
@@ -455,56 +471,206 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       <section className="bg-gray-50 rounded-lg p-6">
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Gerenciamento de Candidatos</h2>
         <div className="space-y-4">
-          <div className="flex items-center gap-4">
-            <select
-              className="border rounded px-3 py-2 flex-1"
-              value={selectedCandidateId ?? ''}
-              onChange={(e) => setSelectedCandidateId(e.target.value || null)}
-            >
-              <option value="">Selecione um candidato</option>
-              {candidates.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} {c.email ? `(${c.email})` : ''}
-                </option>
-              ))}
-            </select>
-            <button onClick={assignCandidate} disabled={!selectedCandidateId} className="btn btn-primary">
-              Atribuir à vaga
-            </button>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="card p-4 bg-white">
+              <div className="text-sm font-medium text-gray-700 mb-2">Atribuir candidato à vaga</div>
+              <div className="flex items-center gap-2">
+                <select
+                  className="border rounded px-3 py-2 flex-1"
+                  value={selectedCandidateId ?? ''}
+                  onChange={(e) => setSelectedCandidateId(e.target.value || null)}
+                >
+                  <option value="">Selecione um candidato</option>
+                  {candidates.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} {c.email ? `(${c.email})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <button onClick={assignCandidate} disabled={!selectedCandidateId} className="btn btn-primary">
+                  Atribuir à vaga
+                </button>
+              </div>
+            </div>
+            <div className="card p-4 bg-white">
+              <div className="text-sm font-medium text-gray-700 mb-2">Adicionar candidato a uma etapa</div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <select
+                  className="border rounded px-3 py-2"
+                  value={selectedCandidateId ?? ''}
+                  onChange={(e) => setSelectedCandidateId(e.target.value || null)}
+                >
+                  <option value="">Selecione um candidato</option>
+                  {candidates.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} {c.email ? `(${c.email})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="border rounded px-3 py-2"
+                  value={activeTab ?? ''}
+                  onChange={(e) => setActiveTab(e.target.value || null)}
+                  disabled={!selectedCandidateId}
+                >
+                  <option value="">Selecione uma etapa</option>
+                  {stages.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <button 
+                  onClick={async()=>{
+                    if(!selectedCandidateId || !activeTab || !jobId) return
+                    // criar application se não existir
+                    const existingApp = applications.find((a)=>a.candidate_id===selectedCandidateId)
+                    let appId = existingApp?.id
+                    if(!appId){
+                      const appRes = await fetch(`/api/jobs/${jobId}/applications`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ candidate_id: selectedCandidateId }),
+                      })
+                      if(appRes.ok){
+                        appId = (await appRes.json()).id
+                        const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r)=>r.json())
+                        setApplications(apps.items || [])
+                      }
+                    }
+                    // criar application_stage
+                    if(appId){
+                      await fetch('/api/applications/stages', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ application_id: appId, stage_id: activeTab }),
+                      })
+                      // recarregar board
+                      const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(()=>null)
+                      if(b){ setBoard(b as any) }
+                      notify({ title: 'Candidato adicionado à etapa', variant: 'success' })
+                      setSelectedCandidateId(null)
+                    }
+                  }}
+                  disabled={!selectedCandidateId || !activeTab} 
+                  className="btn btn-primary whitespace-nowrap"
+                >
+                  Adicionar
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="text-sm text-gray-700">
-            <strong>Candidatos atribuídos:</strong>
-            <ul className="list-disc pl-5 mt-2">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <strong className="text-gray-800">Candidatos atribuídos</strong>
+              <span className="text-xs text-gray-500">{applications.length} candidato(s)</span>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {applications.map((a) => {
                 const c = candidates.find((x) => x.id === a.candidate_id)
                 return (
-                  <li key={a.id} className="flex items-center justify-between">
-                    <span>{c?.name || a.candidate_id}</span>
-                    <button 
-                      className="text-red-600 hover:text-red-700 underline text-xs" 
-                      onClick={async()=>{ 
-                        if(!confirm('Remover candidato desta vaga?')) return; 
-                        await fetch(`/api/applications/${a.id}`, { method: 'DELETE' }); 
-                        const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r)=>r.json()); 
-                        setApplications(apps.items || []) 
-                      }}
-                    >
-                      Remover
-                    </button>
-                  </li>
+                  <div key={a.id} className="border rounded-xl p-4 bg-white shadow-sm hover:shadow-md transition-shadow">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold">
+                          {(c?.name || a.candidate_id).slice(0,2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-medium text-gray-900 truncate">{c?.name || a.candidate_id}</div>
+                          {c?.email && <div className="text-xs text-gray-600 truncate">{c.email}</div>}
+                        </div>
+                      </div>
+                      <button 
+                        className="text-red-600 hover:text-red-700 text-xs bg-red-50 hover:bg-red-100 rounded px-2 py-1"
+                        onClick={async()=>{ 
+                          if(!confirm('Remover candidato desta vaga?')) return; 
+                          await fetch(`/api/applications/${a.id}`, { method: 'DELETE' }); 
+                          const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r)=>r.json()); 
+                          setApplications(apps.items || []) 
+                        }}
+                        title="Remover candidato"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                      <span>ID: {a.id.slice(0,8)}…</span>
+                      <a href={`/candidates`} className="text-blue-600 hover:underline">ver perfil</a>
+                    </div>
+                  </div>
                 )
               })}
-            </ul>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Etapas Configuradas */}
+      {/* Etapas como Abas + Split view */}
       <section>
-        <h2 className="text-xl font-semibold text-gray-900 mb-6">Etapas Configuradas</h2>
-        <div className="space-y-6">
-          {stages.map((s) => (
-            <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <h2 className="text-xl font-semibold text-gray-900 mb-6">Etapas</h2>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <div className="lg:col-span-7 xl:col-span-8">
+            <JobStageHeader
+              stages={stages}
+              lanes={board?.lanes || {}}
+              activeStageId={activeTab}
+              onChange={(id)=>{
+                setActiveTab(id)
+                const url = new URL(window.location.href)
+                url.searchParams.set('stageId', id)
+                window.history.replaceState({}, '', url.toString())
+              }}
+            />
+            {activeTab && (
+              <div className="flex items-center justify-between py-4">
+                <BulkActions
+                  jobId={jobId!}
+                  stages={stages}
+                  activeStageId={activeTab}
+                  selectedIds={Object.entries(selectedForBulk).filter(([_,v])=>v).map(([k])=>k)}
+                  onMoved={async()=>{
+                    const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(()=>null)
+                    if(b){ setBoard(b as any); setSelectedForBulk({}) }
+                  }}
+                />
+                <div className="text-sm text-gray-600">Etapa ativa: <span className="font-medium">{stages.find(s=>s.id===activeTab)?.name}</span></div>
+              </div>
+            )}
+            <CandidatesFilters value={filters} onChange={setFilters} />
+            {activeTab && (
+              <div className="mt-4">
+                <CandidatesTable
+                  stage={stages.find(s=>s.id===activeTab)!}
+                  items={(board?.lanes?.[activeTab] || []) as any}
+                  selectedMap={selectedForBulk}
+                  setSelectedMap={setSelectedForBulk}
+                  onSelect={(it)=>{
+                    setCurrentItem({ application_id: it.application_id, application_stage_id: it.application_stage_id, candidate: { id: it.candidate.id, name: it.candidate.name }})
+                    const url = new URL(window.location.href)
+                    url.searchParams.set('candidateId', it.candidate.id)
+                    window.history.replaceState({}, '', url.toString())
+                  }}
+                  filters={filters}
+                />
+              </div>
+            )}
+          </div>
+          <div className="lg:col-span-5 xl:col-span-4">
+            <AnalysisSplitPane
+              stageId={activeTab}
+              selection={currentItem}
+              onRefreshed={async()=>{
+                const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(()=>null)
+                if(b){ setBoard(b as any) }
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Conteúdo da etapa ativa (metadados e prompt) */}
+        {stages.map((s) => (
+          <div key={s.id} className={activeTab===s.id ? 'block' : 'hidden'}>
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mt-8">
               {/* Header da etapa */}
               <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
                 <div className="flex items-center justify-between">
@@ -614,7 +780,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                   loading={promptLoadingStage === s.id}
                   onChange={handleStagePromptChange}
                 />
-                
                 {/* Seção de análise de candidato - SEMPRE VISÍVEL E EXPANDIDA */}
                 <div className="bg-gray-50 rounded-lg p-6">
                   <h4 className="font-semibold text-gray-900 mb-6 flex items-center">
@@ -637,14 +802,11 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                         }}
                       >
                         <option value="">Selecione um candidato</option>
-                        {applications.map((app) => {
-                          const candidate = candidates.find(c => c.id === app.candidate_id)
-                          return (
-                            <option key={app.id} value={app.candidate_id}>
-                              {candidate?.name || app.candidate_id} {candidate?.email ? `(${candidate.email})` : ''}
-                            </option>
-                          )
-                        })}
+                        {(board?.lanes?.[s.id] || []).map((item: any) => (
+                          <option key={item.application_stage_id} value={item.candidate?.id}>
+                            {(item.candidate?.name || item.candidate?.id)} {item.candidate?.email ? `(${item.candidate.email})` : ''}
+                          </option>
+                        ))}
                       </select>
                       {stageSelectedCandidates[s.id] && (
                         <span className="text-sm text-green-600 font-medium flex items-center px-2 py-1 bg-green-50 rounded-md">
@@ -676,8 +838,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                 </div>
               </div>
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </section>
 
       {/* Painel de candidatos */}
@@ -751,10 +913,41 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const [transcriptFile, setTranscriptFile] = useState<File | null>(null)
+  const [stageDocumentFile, setStageDocumentFile] = useState<File | null>(null)
+  const [selectedResume, setSelectedResume] = useState<{ resume_path: string; resume_bucket: string } | null>(null)
+  const [availableResumes, setAvailableResumes] = useState<any[]>([])
+  const [loadingResumes, setLoadingResumes] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [runId, setRunId] = useState<string | null>(null)
   const [polling, setPolling] = useState(false)
   const [appStageIdForPoller, setAppStageIdForPoller] = useState<string | null>(null)
+
+  // Carregar currículos do candidato quando applicationId mudar
+  useEffect(() => {
+    if (applicationId) {
+      setLoadingResumes(true)
+      fetch(`/api/applications/${applicationId}/resumes`)
+        .then(r => r.json())
+        .then(j => {
+          setAvailableResumes(j.items || [])
+          if (j.items && j.items.length > 0) {
+            // Selecionar o primeiro currículo automaticamente
+            setSelectedResume({
+              resume_path: j.items[0].resume_path,
+              resume_bucket: j.items[0].resume_bucket,
+            })
+          }
+        })
+        .catch(err => {
+          console.error('Erro ao carregar currículos:', err)
+          setAvailableResumes([])
+        })
+        .finally(() => setLoadingResumes(false))
+    } else {
+      setAvailableResumes([])
+      setSelectedResume(null)
+    }
+  }, [applicationId])
 
   async function uploadToSignedUrl(uploadUrl: string, file: File, contentType: string) {
     const r = await fetch(uploadUrl, { 
@@ -830,17 +1023,69 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
         transcriptSignedUrl = j.view_url || undefined
       }
 
+      // Upload de documento de etapa se fornecido
+      let documentPath: string | undefined
+      let documentBucket: string | undefined
+      let documentSignedUrl: string | undefined
+      let documentType: string | undefined
+      
+      if (stageDocumentFile) {
+        const contentType = stageDocumentFile.type || 
+          (stageDocumentFile.name.endsWith('.pdf') ? 'application/pdf' :
+          stageDocumentFile.name.endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
+          stageDocumentFile.name.endsWith('.doc') ? 'application/msword' :
+          stageDocumentFile.name.endsWith('.json') ? 'application/json' : 'application/pdf')
+        
+        const docType = contentType.includes('pdf') ? 'pdf' :
+          contentType.includes('docx') ? 'docx' :
+          contentType.includes('msword') ? 'doc' :
+          contentType.includes('json') ? 'json' : 'pdf'
+        
+        const r = await fetch('/api/uploads/resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: stageDocumentFile.name, content_type: contentType, for_stage: true }),
+        })
+        const j = await r.json()
+        await uploadToSignedUrl(j.upload_url, stageDocumentFile, contentType)
+        
+        const bucketMatch = j.path.match(/^([^/]+)\/(.+)$/)
+        if (bucketMatch) {
+          documentBucket = bucketMatch[1]
+          documentPath = bucketMatch[2]
+          
+          // Registrar documento na etapa
+          await fetch(`/api/stages/${stageId}/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: docType, storage_path: j.path }),
+          })
+          
+          documentSignedUrl = j.view_url || undefined
+          documentType = docType
+        }
+      }
+      
+      // Usar currículo selecionado se não houver upload novo
+      const finalResumePath = resumePath || selectedResume?.resume_path
+      const finalResumeBucket = resumeBucket || selectedResume?.resume_bucket
+      const finalResumeSignedUrl = resumeSignedUrl || undefined
+
       const payload: any = {
         application_id: applicationId,
-        resume_path: resumePath,
-        resume_bucket: resumeBucket,
-        resume_signed_url: resumeSignedUrl,
+        resume_path: finalResumePath,
+        resume_bucket: finalResumeBucket,
+        resume_signed_url: finalResumeSignedUrl,
         audio_path: audioPath,
         audio_bucket: audioBucket,
         audio_signed_url: audioSignedUrl,
         transcript_path: transcriptPath,
         transcript_bucket: transcriptBucket,
         transcript_signed_url: transcriptSignedUrl,
+        document_path: documentPath,
+        document_bucket: documentBucket,
+        document_signed_url: documentSignedUrl,
+        document_type: documentType,
       }
 
       console.log('[DEBUG] Enviando payload para avaliação:', payload)
@@ -870,15 +1115,71 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
         </div>
       )}
       
+      {/* Seleção de currículo já anexado */}
+      {applicationId && (
+        <div className="bg-gray-50 rounded-md p-4 border border-gray-200">
+          <label className="block text-xs font-medium text-gray-700 mb-2">
+            Currículo do candidato (já anexado)
+          </label>
+          {loadingResumes ? (
+            <div className="text-sm text-gray-500">Carregando currículos...</div>
+          ) : availableResumes.length > 0 ? (
+            <select
+              value={selectedResume ? `${selectedResume.resume_path}:${selectedResume.resume_bucket}` : ''}
+              onChange={(e) => {
+                const value = e.target.value
+                if (value) {
+                  const [path, bucket] = value.split(':')
+                  setSelectedResume({ resume_path: path, resume_bucket: bucket })
+                  // Limpar upload novo se selecionar um currículo existente
+                  setResumeFile(null)
+                } else {
+                  setSelectedResume(null)
+                }
+              }}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Selecione um currículo anexado</option>
+              {availableResumes.map((resume, idx) => (
+                <option key={idx} value={`${resume.resume_path}:${resume.resume_bucket}`}>
+                  Currículo {idx + 1} {resume.created_at ? `(${new Date(resume.created_at).toLocaleDateString('pt-BR')})` : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="text-sm text-gray-500">Nenhum currículo anexado ao candidato. Faça upload de um novo abaixo.</div>
+          )}
+        </div>
+      )}
+
       <div className="space-y-3">
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Currículo (PDF)</label>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Novo Currículo (PDF, DOCX, DOC) {selectedResume ? '(opcional - sobrescreve seleção acima)' : '(opcional)'}
+          </label>
           <input 
             type="file" 
-            accept="application/pdf" 
+            accept=".pdf,.doc,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" 
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
-            onChange={(e) => setResumeFile(e.target.files?.[0] || null)} 
+            onChange={(e) => {
+              const file = e.target.files?.[0] || null
+              if (file) {
+                const maxSize = 10 * 1024 * 1024 // 10MB
+                if (file.size > maxSize) {
+                  try { 
+                    const { useToast } = require('@/components/ToastProvider')
+                    const { notify } = useToast()
+                    notify({ title: 'Arquivo muito grande', description: `O arquivo deve ter no máximo 10MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
+                  } catch {}
+                  e.target.value = ''
+                  return
+                }
+                setSelectedResume(null)
+              }
+              setResumeFile(file)
+            }} 
           />
+          <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 10MB</p>
         </div>
         
         <div>
@@ -887,18 +1188,86 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
             type="file" 
             accept="audio/*" 
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
-            onChange={(e) => setAudioFile(e.target.files?.[0] || null)} 
+            onChange={(e) => {
+              const file = e.target.files?.[0] || null
+              if (file) {
+                const maxSize = 50 * 1024 * 1024 // 50MB para áudio
+                if (file.size > maxSize) {
+                  try { 
+                    const { useToast } = require('@/components/ToastProvider')
+                    const { notify } = useToast()
+                    notify({ title: 'Arquivo muito grande', description: `O arquivo de áudio deve ter no máximo 50MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
+                  } catch {}
+                  e.target.value = ''
+                  return
+                }
+              }
+              setAudioFile(file)
+            }} 
           />
+          <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 50MB</p>
         </div>
         
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Transcrição (JSON)</label>
           <input 
             type="file" 
-            accept="application/json" 
+            accept="application/json,.json" 
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
-            onChange={(e) => setTranscriptFile(e.target.files?.[0] || null)} 
+            onChange={(e) => {
+              const file = e.target.files?.[0] || null
+              if (file) {
+                const maxSize = 5 * 1024 * 1024 // 5MB para JSON
+                if (file.size > maxSize) {
+                  try { 
+                    const { useToast } = require('@/components/ToastProvider')
+                    const { notify } = useToast()
+                    notify({ title: 'Arquivo muito grande', description: `O arquivo JSON deve ter no máximo 5MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
+                  } catch {}
+                  e.target.value = ''
+                  return
+                }
+              }
+              setTranscriptFile(file)
+            }} 
           />
+          <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 5MB</p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Documento para análise na etapa (PDF, DOCX, DOC, JSON)
+          </label>
+          <p className="text-xs text-gray-500 mb-2">
+            Anexe um documento que a IA deve usar para analisar o diálogo de transcrição e formular uma nota
+          </p>
+          <input 
+            type="file" 
+            accept=".pdf,.docx,.doc,.json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/json" 
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+            onChange={(e) => {
+              const file = e.target.files?.[0] || null
+              if (file) {
+                const maxSize = 10 * 1024 * 1024 // 10MB para documentos
+                if (file.size > maxSize) {
+                  try { 
+                    const { useToast } = require('@/components/ToastProvider')
+                    const { notify } = useToast()
+                    notify({ title: 'Arquivo muito grande', description: `O documento deve ter no máximo 10MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
+                  } catch {}
+                  e.target.value = ''
+                  return
+                }
+              }
+              setStageDocumentFile(file)
+            }} 
+          />
+          {stageDocumentFile && (
+            <p className="text-xs text-gray-600 mt-1">
+              Arquivo selecionado: {stageDocumentFile.name} ({(stageDocumentFile.size / 1024 / 1024).toFixed(2)}MB)
+            </p>
+          )}
+          <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 10MB</p>
         </div>
       </div>
       
