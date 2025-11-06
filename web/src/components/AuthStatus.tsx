@@ -4,11 +4,16 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser'
 
-export default function AuthStatus() {
+type AuthStatusProps = {
+  variant?: 'default' | 'mobile'
+}
+
+export default function AuthStatus({ variant = 'default' }: AuthStatusProps) {
   const supabase = getSupabaseBrowser()
   const router = useRouter()
   const [email, setEmail] = useState<string | null>(null)
   const [loggingOut, setLoggingOut] = useState(false)
+  const isMobile = variant === 'mobile'
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null))
@@ -44,11 +49,21 @@ export default function AuthStatus() {
     }
   }
 
-  if (!email) return <a href="/login" className="btn btn-outline text-sm">Entrar</a>
+  const linkClasses = isMobile
+    ? 'btn btn-outline text-sm w-full justify-center'
+    : 'btn btn-outline text-sm'
+
+  if (!email) return <a href="/login" className={linkClasses}>Entrar</a>
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="opacity-80">{email}</span>
-      <button onClick={handleLogout} disabled={loggingOut} className="btn btn-outline disabled:opacity-60">
+    <div className={isMobile ? 'flex w-full flex-col gap-3 text-sm' : 'flex items-center gap-2 text-sm'}>
+      <span className={isMobile ? 'text-sm text-gray-700 break-words' : 'max-w-[200px] truncate text-gray-700'} title={email}>
+        {email}
+      </span>
+      <button
+        onClick={handleLogout}
+        disabled={loggingOut}
+        className={isMobile ? 'btn btn-outline disabled:opacity-60 w-full justify-center' : 'btn btn-outline disabled:opacity-60'}
+      >
         {loggingOut ? 'Saindo...' : 'Sair'}
       </button>
     </div>

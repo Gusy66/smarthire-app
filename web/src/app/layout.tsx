@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ToastProvider from "@/components/ToastProvider";
 import Sidebar from "@/components/Sidebar";
+import NavBar from "@/components/NavBar";
 import AuthSessionSync from "@/components/AuthSessionSync";
 
 const geistSans = Geist({
@@ -30,9 +31,15 @@ export default function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}>
         <AuthSessionSync />
         <ToastProvider>
-          <div className="flex min-h-screen">
+          {/* NavBar para mobile */}
+          <div className="md:hidden">
+            <NavBar />
+          </div>
+          
+          {/* Layout desktop com Sidebar + Main, mobile com só main */}
+          <div className="flex min-h-screen md:min-h-[calc(100vh-0)]">
             <Sidebar />
-            <main className="flex-1 py-6 px-4 md:px-8">
+            <main className="flex-1 w-full py-6 px-4 md:px-8 pt-16 md:pt-6">
               <div className="container-page max-w-none">
                 {children}
               </div>
