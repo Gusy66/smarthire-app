@@ -7,7 +7,6 @@ import JobStageHeader from './_components/JobStageHeader'
 import CandidatesTable from './_components/CandidatesTable'
 import BulkActions from './_components/BulkActions'
 import CandidatesFilters, { CandidateFilters as CF } from './_components/CandidatesFilters'
-import AnalysisSplitPane from './_components/AnalysisSplitPane'
 
 type Stage = { id: string; name: string; description: string | null; order_index: number; threshold: number; stage_weight: number }
 type Candidate = { id: string; name: string; email?: string }
@@ -126,7 +125,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
 
   // Candidates assigned to the job (simplificado: todos candidatos do tenant)
   const [candidates, setCandidates] = useState<Candidate[]>([])
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
+  const [candidateSearch, setCandidateSearch] = useState('')
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([])
   const [applications, setApplications] = useState<any[]>([])
   
   // Candidato selecionado para cada etapa
@@ -245,13 +245,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     }
   }
 
-  const selectedCandidate = useMemo(() => candidates.find((c) => c.id === selectedCandidateId) || null, [candidates, selectedCandidateId])
-  const selectedApplicationId = useMemo(() => {
-    if (!selectedCandidateId) return null
-    const app = applications.find((a) => a.candidate_id === selectedCandidateId)
-    return app?.id || null
-  }, [applications, selectedCandidateId])
-
   // Função para obter application_id de um candidato específico
   const getApplicationId = useCallback((candidateId: string | null) => {
     if (!candidateId) return null
@@ -369,542 +362,387 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     loadAnalysisForStage(stageId, candidateId)
   }, [loadAnalysisForStage])
 
-  async function assignCandidate() {
-    if (!jobId || !selectedCandidateId) return
-    await api(`/api/jobs/${jobId}/applications`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ candidate_id: selectedCandidateId }),
+  useEffect(() => {
+    setSelectedCandidateIds((prev) => prev.filter((id) => !applications.some((app) => app.candidate_id === id)))
+  }, [applications])
+
+  const availableCandidates = useMemo(
+    () => candidates.filter((c) => !applications.some((app) => app.candidate_id === c.id)),
+    [candidates, applications],
+  )
+
+  const filteredCandidates = useMemo(() => {
+    const query = candidateSearch.trim().toLowerCase()
+    if (!query) return availableCandidates
+    return availableCandidates.filter((c) => {
+      const name = c.name?.toLowerCase() ?? ''
+      const email = c.email?.toLowerCase() ?? ''
+      return name.includes(query) || email.includes(query) || c.id.toLowerCase().includes(query)
     })
-    const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r) => r.json())
+  }, [availableCandidates, candidateSearch])
+
+  const toggleCandidateSelection = (candidateId: string) => {
+    setSelectedCandidateIds((prev) =>
+      prev.includes(candidateId) ? prev.filter((id) => id !== candidateId) : [...prev, candidateId],
+    )
+  }
+
+  async function assignCandidate() {
+    if (!jobId || selectedCandidateIds.length === 0) return
+
+    const firstStageId = stages[0]?.id ?? null
+    let successCount = 0
+
+    for (const candidateId of selectedCandidateIds) {
+      try {
+        const appData = await api<{ id: string }>(`/api/jobs/${jobId}/applications`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidate_id: candidateId }),
+        })
+        const appId = appData?.id
+
+        if (appId && firstStageId) {
+          try {
+            await fetch('/api/applications/stages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ application_id: appId, stage_id: firstStageId }),
+            })
+          } catch (error) {
+            console.error('Erro ao adicionar candidato à primeira etapa:', error)
+          }
+        }
+
+        successCount += 1
+      } catch (error: any) {
+        console.error('Erro ao atribuir candidato à vaga:', error)
+        notify({
+          title: 'Erro ao atribuir candidato',
+          description: error?.message || 'Não foi possível atribuir um dos candidatos selecionados.',
+          variant: 'error',
+        })
+      }
+    }
+
+    const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r) => r.json()).catch(() => ({ items: [] }))
     setApplications(apps.items || [])
-    notify({ title: 'Candidato atribuído', variant: 'success' })
+
+    const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
+    if (b) {
+      setBoard(b as any)
+    }
+
+    if (firstStageId) {
+      setActiveTab(firstStageId)
+      if (selectedCandidateIds[0]) {
+        setStageSelectedCandidates((prev) => ({ ...prev, [firstStageId]: selectedCandidateIds[0] }))
+      }
+    }
+
+    setSelectedCandidateIds([])
+
+    if (successCount > 0) {
+      notify({
+        title: successCount > 1 ? 'Candidatos atribuídos' : 'Candidato atribuído',
+        description:
+          successCount > 1
+            ? `${successCount} candidatos foram movidos para o início do processo seletivo.`
+            : 'O candidato foi movido para a primeira etapa.',
+        variant: 'success',
+      })
+    }
   }
 
   return (
-    <div className="space-y-8">
+    <div className="min-h-screen bg-[#f7f7f7] pb-12">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Etapas da Vaga</h1>
-          <p className="text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
+      <div className="bg-white border-b border-gray-200 shadow-sm -mx-4 md:-mx-8 px-4 md:px-8 mb-8">
+        <div className="flex w-full flex-col gap-4 py-6 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-sm text-gray-500">Vagas / Processo seletivo</div>
+            <h1 className="mt-2 text-2xl font-semibold text-gray-900">Processo Seletivo</h1>
+            <p className="text-sm text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
+          </div>
+          {jobId && (
+            <button
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-red-700 whitespace-nowrap"
+              onClick={async()=>{
+                if(!confirm('Excluir esta vaga e todas as etapas/candidaturas relacionadas?')) return
+                const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' })
+                if(!res.ok){
+                  const t = await res.text();
+                  let msg = 'Falha ao excluir a vaga'
+                  try{ const j = t ? JSON.parse(t) : null; msg = j?.error?.message || msg }catch{}
+                  notify({ title: 'Erro', description: msg, variant: 'error' })
+                  return
+                }
+                notify({ title: 'Vaga excluída', variant: 'success' })
+                window.location.href = '/jobs'
+              }}
+            >
+              🗑️ Excluir vaga
+            </button>
+          )}
         </div>
-        {jobId && (
-          <button
-            className="btn btn-danger"
-            onClick={async()=>{
-              if(!confirm('Excluir esta vaga e todas as etapas/candidaturas relacionadas?')) return
-              const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' })
-              if(!res.ok){
-                const t = await res.text();
-                let msg = 'Falha ao excluir a vaga'
-                try{ const j = t ? JSON.parse(t) : null; msg = j?.error?.message || msg }catch{}
-                notify({ title: 'Erro', description: msg, variant: 'error' })
-                return
-              }
-              notify({ title: 'Vaga excluída', variant: 'success' })
-              window.location.href = '/jobs'
-            }}
-          >
-            🗑️ Excluir vaga
-          </button>
-        )}
       </div>
 
-      {/* Criar Nova Etapa */}
-      <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Criar Nova Etapa</h2>
-        <form onSubmit={createStage} className="grid gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-700">Nome da etapa</label>
-              <input
-                value={stageForm.name}
-                onChange={(e) => setStageForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="Ex.: Triagem de currículo"
-                className="border rounded px-3 py-2"
-                required
-              />
+      {/* Main Content */}
+      <div className="space-y-8">
+        {/* Métricas */}
+        {board && (
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="text-sm text-gray-500">Total de Candidatos</div>
+              <div className="mt-2 text-3xl font-semibold text-gray-900">{applications.length}</div>
+              <div className="text-xs text-gray-400 mt-1">Atribuídos à vaga</div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-700">Threshold (nota mínima para aprovar)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={stageForm.threshold}
-                  onChange={(e) => setStageForm((f) => ({ ...f, threshold: Number(e.target.value) }))}
-                  placeholder="0–10 (ex.: 7.0)"
-                  className="border rounded px-3 py-2"
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-700">Peso da etapa (importância na média)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={stageForm.stage_weight}
-                  onChange={(e) => setStageForm((f) => ({ ...f, stage_weight: Number(e.target.value) }))}
-                  placeholder="ex.: 1.0 (2.0 vale o dobro)"
-                  className="border rounded px-3 py-2"
-                />
-              </div>
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="text-sm text-gray-500">Etapas</div>
+              <div className="mt-2 text-3xl font-semibold text-gray-900">{stages.length}</div>
+              <div className="text-xs text-gray-400 mt-1">No processo seletivo</div>
+            </div>
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="text-sm text-gray-500">Análises Concluídas</div>
+              <div className="mt-2 text-3xl font-semibold text-green-600">{Object.values(analysisByStage).filter(a => a?.status === 'succeeded').length}</div>
+              <div className="text-xs text-green-600 mt-1">Candidatos avaliados</div>
+            </div>
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="text-sm text-gray-500">Próximas Ações</div>
+              <div className="mt-2 text-3xl font-semibold text-gray-900">{stages.filter(s => !stagePromptMap[s.id]).length}</div>
+              <div className="text-xs text-yellow-600 mt-1">Sem prompt definido</div>
             </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-gray-700">Descrição da etapa</label>
-            <textarea
-              value={stageForm.description}
-              onChange={(e) => setStageForm((f) => ({ ...f, description: e.target.value }))}
-              placeholder="Conteúdo/objetivo da etapa e o que a IA deve considerar"
-              className="border rounded px-3 py-2"
-              rows={3}
-            />
-          </div>
-          <button disabled={creating} className="btn btn-primary w-fit">
-            {creating ? 'Criando...' : 'Adicionar etapa'}
-          </button>
-        </form>
-      </section>
+        )}
 
-      {/* Gerenciamento de Candidatos */}
-      <section className="bg-gray-50 rounded-lg p-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Gerenciamento de Candidatos</h2>
-        <div className="space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="card p-4 bg-white">
-              <div className="text-sm font-medium text-gray-700 mb-2">Atribuir candidato à vaga</div>
-              <div className="flex items-center gap-2">
-                <select
-                  className="border rounded px-3 py-2 flex-1"
-                  value={selectedCandidateId ?? ''}
-                  onChange={(e) => setSelectedCandidateId(e.target.value || null)}
+        {/* Candidatos */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Gerenciamento de Candidatos</h2>
+              <p className="text-sm text-gray-600">Atribua candidatos à vaga e visualize o progresso</p>
+            </div>
+          </div>
+          
+          <div className="space-y-6">
+            {/* Atribuir Candidato */}
+            <div className="border-b border-gray-200 pb-6">
+              <label className="block text-sm font-medium text-gray-900 mb-3">Atribuir candidato à vaga</label>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex-1">
+                  <select
+                    multiple
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20 min-h-[160px]"
+                    value={selectedCandidateIds}
+                    onChange={(e) =>
+                      setSelectedCandidateIds(Array.from(e.target.selectedOptions).map((option) => option.value))
+                    }
+                  >
+                    {candidates
+                      .filter((c) => !applications.some((app) => app.candidate_id === c.id))
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} {c.email ? `(${c.email})` : ''}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="mt-2 text-xs text-gray-500">
+                    Use Ctrl/⌘ para selecionar vários candidatos e clique em “Atribuir à vaga”.
+                  </p>
+                </div>
+                <button 
+                  onClick={assignCandidate} 
+                  disabled={selectedCandidateIds.length === 0}
+                  className="rounded-lg bg-green-600 px-6 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                 >
-                  <option value="">Selecione um candidato</option>
-                  {candidates.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} {c.email ? `(${c.email})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <button onClick={assignCandidate} disabled={!selectedCandidateId} className="btn btn-primary">
                   Atribuir à vaga
                 </button>
               </div>
             </div>
-            <div className="card p-4 bg-white">
-              <div className="text-sm font-medium text-gray-700 mb-2">Adicionar candidato a uma etapa</div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <select
-                  className="border rounded px-3 py-2"
-                  value={selectedCandidateId ?? ''}
-                  onChange={(e) => setSelectedCandidateId(e.target.value || null)}
-                >
-                  <option value="">Selecione um candidato</option>
-                  {candidates.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} {c.email ? `(${c.email})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="border rounded px-3 py-2"
-                  value={activeTab ?? ''}
-                  onChange={(e) => setActiveTab(e.target.value || null)}
-                  disabled={!selectedCandidateId}
-                >
-                  <option value="">Selecione uma etapa</option>
-                  {stages.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-                <button 
-                  onClick={async()=>{
-                    if(!selectedCandidateId || !activeTab || !jobId) return
-                    // criar application se não existir
-                    const existingApp = applications.find((a)=>a.candidate_id===selectedCandidateId)
-                    let appId = existingApp?.id
-                    if(!appId){
-                      const appRes = await fetch(`/api/jobs/${jobId}/applications`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ candidate_id: selectedCandidateId }),
-                      })
-                      if(appRes.ok){
-                        appId = (await appRes.json()).id
-                        const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r)=>r.json())
-                        setApplications(apps.items || [])
-                      }
-                    }
-                    // criar application_stage
-                    if(appId){
-                      await fetch('/api/applications/stages', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ application_id: appId, stage_id: activeTab }),
-                      })
-                      // recarregar board
-                      const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(()=>null)
-                      if(b){ setBoard(b as any) }
-                      notify({ title: 'Candidato adicionado à etapa', variant: 'success' })
-                      setSelectedCandidateId(null)
-                    }
-                  }}
-                  disabled={!selectedCandidateId || !activeTab} 
-                  className="btn btn-primary whitespace-nowrap"
-                >
-                  Adicionar
-                </button>
+
+            {/* Candidatos Atribuídos */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-gray-900">Candidatos Atribuídos ({applications.length})</h3>
               </div>
-            </div>
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <strong className="text-gray-800">Candidatos atribuídos</strong>
-              <span className="text-xs text-gray-500">{applications.length} candidato(s)</span>
-            </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {applications.map((a) => {
-                const c = candidates.find((x) => x.id === a.candidate_id)
-                return (
-                  <div key={a.id} className="border rounded-xl p-4 bg-white shadow-sm hover:shadow-md transition-shadow">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold">
-                          {(c?.name || a.candidate_id).slice(0,2).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-medium text-gray-900 truncate">{c?.name || a.candidate_id}</div>
-                          {c?.email && <div className="text-xs text-gray-600 truncate">{c.email}</div>}
+              {applications.length > 0 ? (
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {applications.map((a) => {
+                    const c = candidates.find((x) => x.id === a.candidate_id)
+                    return (
+                      <div key={a.id} className="border border-gray-200 rounded-xl p-4 bg-white hover:shadow-md transition-shadow">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold text-sm flex-shrink-0">
+                              {(c?.name || a.candidate_id).slice(0,2).toUpperCase()}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="font-medium text-gray-900 truncate">{c?.name || a.candidate_id}</div>
+                              {c?.email && <div className="text-xs text-gray-600 truncate">{c.email}</div>}
+                            </div>
+                          </div>
+                          <button 
+                            className="text-red-600 hover:text-red-700 text-xs bg-red-50 hover:bg-red-100 rounded px-2 py-1 flex-shrink-0 whitespace-nowrap"
+                            onClick={async()=>{ 
+                              if(!confirm('Remover candidato desta vaga?')) return; 
+                              await fetch(`/api/applications/${a.id}`, { method: 'DELETE' }); 
+                              const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r)=>r.json()); 
+                              setApplications(apps.items || []) 
+                            }}
+                            title="Remover candidato"
+                          >
+                            ✕ Remover
+                          </button>
                         </div>
                       </div>
-                      <button 
-                        className="text-red-600 hover:text-red-700 text-xs bg-red-50 hover:bg-red-100 rounded px-2 py-1"
-                        onClick={async()=>{ 
-                          if(!confirm('Remover candidato desta vaga?')) return; 
-                          await fetch(`/api/applications/${a.id}`, { method: 'DELETE' }); 
-                          const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r)=>r.json()); 
-                          setApplications(apps.items || []) 
-                        }}
-                        title="Remover candidato"
-                      >
-                        Remover
-                      </button>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                      <span>ID: {a.id.slice(0,8)}…</span>
-                      <a href={`/candidates`} className="text-blue-600 hover:underline">ver perfil</a>
-                    </div>
-                  </div>
-                )
-              })}
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
+                  <p className="text-sm text-gray-600">Nenhum candidato atribuído à vaga ainda.</p>
+                  <p className="text-xs text-gray-500 mt-1">Selecione um candidato acima para começar.</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
-      </section>
 
-      {/* Etapas como Abas + Split view */}
-      <section>
-        <h2 className="text-xl font-semibold text-gray-900 mb-6">Etapas</h2>
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          <div className="lg:col-span-7 xl:col-span-8">
-            <JobStageHeader
-              stages={stages}
-              lanes={board?.lanes || {}}
-              activeStageId={activeTab}
-              onChange={(id)=>{
-                setActiveTab(id)
-                const url = new URL(window.location.href)
-                url.searchParams.set('stageId', id)
-                window.history.replaceState({}, '', url.toString())
-              }}
-            />
-            {activeTab && (
-              <div className="flex items-center justify-between py-4">
-                <BulkActions
-                  jobId={jobId!}
-                  stages={stages}
-                  activeStageId={activeTab}
-                  selectedIds={Object.entries(selectedForBulk).filter(([_,v])=>v).map(([k])=>k)}
-                  onMoved={async()=>{
-                    const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(()=>null)
-                    if(b){ setBoard(b as any); setSelectedForBulk({}) }
-                  }}
-                />
-                <div className="text-sm text-gray-600">Etapa ativa: <span className="font-medium">{stages.find(s=>s.id===activeTab)?.name}</span></div>
-              </div>
-            )}
-            <CandidatesFilters value={filters} onChange={setFilters} />
-            {activeTab && (
-              <div className="mt-4">
-                <CandidatesTable
-                  stage={stages.find(s=>s.id===activeTab)!}
-                  items={(board?.lanes?.[activeTab] || []) as any}
-                  selectedMap={selectedForBulk}
-                  setSelectedMap={setSelectedForBulk}
-                  onSelect={(it)=>{
-                    setCurrentItem({ application_id: it.application_id, application_stage_id: it.application_stage_id, candidate: { id: it.candidate.id, name: it.candidate.name }})
-                    const url = new URL(window.location.href)
-                    url.searchParams.set('candidateId', it.candidate.id)
-                    window.history.replaceState({}, '', url.toString())
-                  }}
-                  filters={filters}
-                />
-              </div>
-            )}
+        {/* Etapas */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-6">
+            <h2 className="text-lg font-semibold text-gray-900">Etapas do Processo</h2>
+            <p className="text-sm text-gray-600">Gerencie as etapas e analise candidatos</p>
           </div>
-          <div className="lg:col-span-5 xl:col-span-4">
-            <AnalysisSplitPane
-              stageId={activeTab}
-              selection={currentItem}
-              onRefreshed={async()=>{
-                const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(()=>null)
-                if(b){ setBoard(b as any) }
-              }}
-            />
-          </div>
-        </div>
 
-        {/* Conteúdo da etapa ativa (metadados e prompt) */}
-        {stages.map((s) => (
-          <div key={s.id} className={activeTab===s.id ? 'block' : 'hidden'}>
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mt-8">
-              {/* Header da etapa */}
-              <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1 pr-4">
-                    {editingStageId === s.id ? (
-                      <div className="grid gap-3">
-                        <input
-                          value={editingStageForm.name}
-                          onChange={(e) => setEditingStageForm((f) => ({ ...f, name: e.target.value }))}
-                          className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                          placeholder="Nome da etapa"
-                        />
-                        <textarea
-                          value={editingStageForm.description}
-                          onChange={(e) => setEditingStageForm((f) => ({ ...f, description: e.target.value }))}
-                          className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                          rows={3}
-                          placeholder="Descrição detalhada da etapa"
-                        />
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Threshold</label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={editingStageForm.threshold}
-                              onChange={(e) => setEditingStageForm((f) => ({ ...f, threshold: Number(e.target.value) }))}
-                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Peso</label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={editingStageForm.stage_weight}
-                              onChange={(e) => setEditingStageForm((f) => ({ ...f, stage_weight: Number(e.target.value) }))}
-                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-3">
-                          <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
-                          <div className="flex items-center gap-2 text-sm text-gray-500">
-                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
-                              Threshold: {s.threshold}
-                            </span>
-                            <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
-                              Peso: {s.stage_weight}
-                            </span>
-                          </div>
-                        </div>
-                        {s.description && (
-                          <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">{s.description}</p>
+          {stages.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
+              <p className="text-sm text-gray-600">Nenhuma etapa cadastrada.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <JobStageHeader
+                stages={stages}
+                lanes={board?.lanes || {}}
+                activeStageId={activeTab}
+                onChange={(id)=>{
+                  setActiveTab(id)
+                  const url = new URL(window.location.href)
+                  url.searchParams.set('stageId', id)
+                  window.history.replaceState({}, '', url.toString())
+                }}
+              />
+              
+              {activeTab && (
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-3 flex-1">
+                      <div className="text-sm flex-1">
+                        <div className="text-xs uppercase tracking-wide text-gray-500">Etapa Ativa</div>
+                        <div className="font-semibold text-gray-900 mt-1">{stages.find(s=>s.id===activeTab)?.name}</div>
+                        {stages.find(s=>s.id===activeTab)?.description && (
+                          <p className="text-xs text-gray-600 mt-2 whitespace-pre-wrap">{stages.find(s=>s.id===activeTab)?.description}</p>
                         )}
-                      </>
-                    )}
-                  </div>
-                  {editingStageId === s.id ? (
-                    <div className="flex gap-2">
-                      <button 
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200" 
-                        onClick={async()=>{
-                          await fetch(`/api/stages/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingStageForm) })
-                          const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`)
-                          setStages(items); setEditingStageId(null)
-                          notify({ title: 'Etapa atualizada', variant: 'success' })
-                        }}
-                      >
-                        Salvar
-                      </button>
-                      <button 
-                        className="border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200" 
-                        onClick={()=>setEditingStageId(null)}
-                      >
-                        Cancelar
-                      </button>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="flex gap-2">
-                      <button 
-                        className="text-blue-600 hover:text-blue-700 text-sm font-medium transition-colors duration-200" 
-                        onClick={()=>{ setEditingStageId(s.id); setEditingStageForm({ name: s.name, description: s.description || '', threshold: s.threshold, stage_weight: s.stage_weight }) }}
-                      >
-                        Editar
-                      </button>
-                      <button 
-                        className="text-red-600 hover:text-red-700 text-sm font-medium transition-colors duration-200" 
-                        onClick={async()=>{ if(!confirm('Remover etapa?')) return; await fetch(`/api/stages/${s.id}`, { method: 'DELETE' }); const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`); setStages(items); notify({ title: 'Etapa removida', variant: 'success' }) }}
-                      >
-                        Remover
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Conteúdo da etapa */}
-              <div className="p-6 space-y-6">
-                <StagePromptSelector
-                  stageId={s.id}
-                  templates={promptTemplates}
-                  selected={stagePromptMap[s.id] ?? null}
-                  loading={promptLoadingStage === s.id}
-                  onChange={handleStagePromptChange}
-                />
-                {/* Seção de análise de candidato - SEMPRE VISÍVEL E EXPANDIDA */}
-                <div className="bg-gray-50 rounded-lg p-6">
-                  <h4 className="font-semibold text-gray-900 mb-6 flex items-center">
-                    <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                    Análise de Candidato
-                  </h4>
-                  
-                  {/* Seletor de candidato */}
-                  <div className="mb-6">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Candidato para avaliação:</label>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <select
-                        className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        value={stageSelectedCandidates[s.id] ?? ''}
-                        onChange={(e) => {
-                          console.log('[DEBUG] Candidato selecionado para etapa', s.id, ':', e.target.value)
-                          handleStageCandidateSelection(s.id, e.target.value || null)
-                        }}
-                      >
-                        <option value="">Selecione um candidato</option>
-                        {(board?.lanes?.[s.id] || []).map((item: any) => (
-                          <option key={item.application_stage_id} value={item.candidate?.id}>
-                            {(item.candidate?.name || item.candidate?.id)} {item.candidate?.email ? `(${item.candidate.email})` : ''}
-                          </option>
-                        ))}
-                      </select>
-                      {stageSelectedCandidates[s.id] && (
-                        <span className="text-sm text-green-600 font-medium flex items-center px-2 py-1 bg-green-50 rounded-md">
-                          ✓ {candidates.find(c => c.id === stageSelectedCandidates[s.id])?.name}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {/* Componente de upload e análise */}
-                  <UploadAndEvaluate 
-                    stageId={s.id} 
-                    applicationId={getApplicationId(stageSelectedCandidates[s.id])}
-                    candidateName={candidates.find(c => c.id === stageSelectedCandidates[s.id])?.name}
-                    onRunFinished={(stageId, runId, applicationStageId) => {
-                      console.log(`[DEBUG] onRunFinished chamado para stageId: ${stageId}, runId: ${runId}`)
-                      const currentCandidate = stageSelectedCandidates[stageId] ?? null
-                      console.log(`[DEBUG] Candidato atual para etapa ${stageId}: ${currentCandidate}`)
-                      if (currentCandidate) {
-                        console.log(`[DEBUG] Recarregando análise para etapa ${stageId}`)
-                        loadAnalysisForStage(stageId, currentCandidate)
-                        setAnalysisExpanded((prev) => ({ ...prev, [stageId]: true }))
-                      } else {
-                        console.log(`[DEBUG] Nenhum candidato selecionado para etapa ${stageId}`)
-                      }
-                    }}
-                  />
-
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </section>
-
-      {/* Painel de candidatos */}
-      <section>
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Painel de Candidatos (MVP)</h2>
-        <Panel jobId={jobId} />
-      </section>
-
-      {/* Análises de Candidatos - SEMPRE VISÍVEIS */}
-      <section>
-        <h2 className="text-xl font-semibold text-gray-900 mb-6">Análises de Candidatos</h2>
-        <div className="space-y-6">
-          {stages.map((s) => (
-            <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-              {/* Header da etapa */}
-              <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
-                    <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
-                      <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
-                        Threshold: {s.threshold}
-                      </span>
-                      <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
-                        Peso: {s.stage_weight}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Análise sempre visível - expandida */}
-              <div className="p-6">
-                {(() => {
-                  const candidateName = stageSelectedCandidates[s.id] ? (candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null) : null
-                  const analysis = analysisByStage[s.id] || null
-                  const loading = Boolean(analysisLoading[s.id])
-                  
-                  console.log(`[DEBUG] Renderizando análise para etapa ${s.id}:`, {
-                    candidateName,
-                    analysis,
-                    loading,
-                    analysisResult: analysis?.result
-                  })
-                  
-                  return (
-                    <StageAnalysisPanel
-                      candidateName={candidateName}
-                      analysis={analysis}
-                      loading={loading}
-                      expanded={true} // Sempre expandido
-                      onToggle={() => {}} // Não permite colapsar
-                      onRefresh={() => {
-                        const candidateId = stageSelectedCandidates[s.id] ?? null
-                        if (candidateId) loadAnalysisForStage(s.id, candidateId)
+                    <BulkActions
+                      jobId={jobId!}
+                      stages={stages}
+                      activeStageId={activeTab}
+                      selectedIds={Object.entries(selectedForBulk).filter(([_,v])=>v).map(([k])=>k)}
+                      onMoved={async()=>{
+                        const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(()=>null)
+                        if(b){ setBoard(b as any); setSelectedForBulk({}) }
                       }}
                     />
-                  )
-                })()}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+                  </div>
 
+                  <CandidatesFilters value={filters} onChange={setFilters} />
+                  
+                  <div>
+                    <CandidatesTable
+                      stage={stages.find(s=>s.id===activeTab)!}
+                      items={(board?.lanes?.[activeTab] || []) as any}
+                      selectedMap={selectedForBulk}
+                      setSelectedMap={setSelectedForBulk}
+                      onSelect={(it)=>{
+                        setCurrentItem({ application_id: it.application_id, application_stage_id: it.application_stage_id, candidate: { id: it.candidate.id, name: it.candidate.name }})
+                        const url = new URL(window.location.href)
+                        url.searchParams.set('candidateId', it.candidate.id)
+                        window.history.replaceState({}, '', url.toString())
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Painel de candidatos */}
+        <section>
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Painel de Candidatos (MVP)</h2>
+          <Panel jobId={jobId} />
+        </section>
+
+        {/* Análises de Candidatos - SEMPRE VISÍVEIS */}
+        <section>
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">Análises de Candidatos</h2>
+          <div className="space-y-6">
+            {stages.map((s) => (
+              <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                {/* Header da etapa */}
+                <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
+                      <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
+                        <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                          Threshold: {s.threshold}
+                        </span>
+                        <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
+                          Peso: {s.stage_weight}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Análise sempre visível - expandida */}
+                <div className="p-6">
+                  {(() => {
+                    const candidateName = stageSelectedCandidates[s.id] ? (candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null) : null
+                    const analysis = analysisByStage[s.id] || null
+                    const loading = Boolean(analysisLoading[s.id])
+                    
+                    console.log(`[DEBUG] Renderizando análise para etapa ${s.id}:`, {
+                      candidateName,
+                      analysis,
+                      loading,
+                      analysisResult: analysis?.result
+                    })
+                    
+                    return (
+                      <StageAnalysisPanel
+                        candidateName={candidateName}
+                        analysis={analysis}
+                        loading={loading}
+                        expanded={true} // Sempre expandido
+                        onToggle={() => {}} // Não permite colapsar
+                        onRefresh={() => {
+                          const candidateId = stageSelectedCandidates[s.id] ?? null
+                          if (candidateId) loadAnalysisForStage(s.id, candidateId)
+                        }}
+                      />
+                    )
+                  })()}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+      </div>
     </div>
   )
 }
@@ -1140,11 +978,19 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
               <option value="">Selecione um currículo anexado</option>
-              {availableResumes.map((resume, idx) => (
-                <option key={idx} value={`${resume.resume_path}:${resume.resume_bucket}`}>
-                  Currículo {idx + 1} {resume.created_at ? `(${new Date(resume.created_at).toLocaleDateString('pt-BR')})` : ''}
-                </option>
-              ))}
+              {availableResumes.map((resume, idx) => {
+                // Extrair nome do arquivo do resume_path (ex: "resumes/1234567-filename.pdf" -> "1234567-filename.pdf")
+                const pathParts = resume.resume_path.split('/')
+                const filename = pathParts[pathParts.length - 1]
+                // Remover timestamp do início (ex: "1234567-" -> "")
+                const displayName = filename.replace(/^\d+-/, '')
+                
+                return (
+                  <option key={idx} value={`${resume.resume_path}:${resume.resume_bucket}`}>
+                    {displayName || `Currículo ${idx + 1}`} {resume.created_at ? `(${new Date(resume.created_at).toLocaleDateString('pt-BR')})` : ''}
+                  </option>
+                )
+              })}
             </select>
           ) : (
             <div className="text-sm text-gray-500">Nenhum currículo anexado ao candidato. Faça upload de um novo abaixo.</div>

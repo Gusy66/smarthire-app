@@ -24,8 +24,8 @@ export async function GET(req: NextRequest) {
     .from('jobs')
     .select('id, company_id, title, description, location, status, created_at, department, job_description, responsibilities, requirements_and_skills, work_schedule, travel_availability, observations, salary, work_model, contract_type, requirements, skills, benefits, applications:applications(count)', { count: 'exact' })
     .eq('company_id', user.company_id)
-  if (status && ['open', 'closed'].includes(status)) {
-    query = query.eq('status', status as 'open' | 'closed')
+  if (status && ['open', 'paused', 'closed'].includes(status)) {
+    query = query.eq('status', status as 'open' | 'paused' | 'closed')
   }
   if (search) {
     const term = `%${search}%`
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
       title,
       description,
       location,
-      status,
+      status: status || 'open',
       salary,
       work_model,
       contract_type,
