@@ -578,19 +578,27 @@ export default function JobsPage() {
   }
 
   const renderActions = (job: Job) => (
-    <div className="relative inline-block text-left" ref={openMenuId === job.id ? menuRef : null}>
+    <div
+      className="relative inline-block text-left"
+      ref={openMenuId === job.id ? menuRef : null}
+      onClick={(event) => event.stopPropagation()}
+    >
       <button
-        onClick={() => setOpenMenuId((prev) => (prev === job.id ? null : job.id))}
+        onClick={(event) => {
+          event.stopPropagation()
+          setOpenMenuId((prev) => (prev === job.id ? null : job.id))
+        }}
         className="rounded-full border border-gray-300 p-2 text-gray-600 transition hover:bg-gray-100"
         aria-label="Abrir ações"
       >
         ⋯
       </button>
       {openMenuId === job.id && (
-        <div className="absolute right-0 z-30 mt-2 w-48 origin-top-right rounded-xl border border-gray-200 bg-white shadow-lg">
+        <div className="absolute right-0 z-40 mt-2 w-48 origin-top-right rounded-xl border border-gray-200 bg-white shadow-lg">
           <div className="py-1 text-sm text-gray-700">
             <button
-              onClick={() => {
+              onClick={(event) => {
+                event.stopPropagation()
                 router.push(`/jobs/${job.id}/stages`)
                 setOpenMenuId(null)
               }}
@@ -600,7 +608,8 @@ export default function JobsPage() {
               Ver Candidatos
             </button>
             <button
-              onClick={() => {
+              onClick={(event) => {
+                event.stopPropagation()
                 setEditingJobId(job.id)
                 setOpenMenuId(null)
               }}
@@ -610,7 +619,8 @@ export default function JobsPage() {
               Editar
             </button>
             <button
-              onClick={() => {
+              onClick={(event) => {
+                event.stopPropagation()
                 handleDuplicate(job.id)
                 setOpenMenuId(null)
               }}
@@ -620,7 +630,8 @@ export default function JobsPage() {
               Duplicar
             </button>
             <button
-              onClick={() => {
+              onClick={(event) => {
+                event.stopPropagation()
                 handleTogglePause(job)
                 setOpenMenuId(null)
               }}
@@ -631,7 +642,8 @@ export default function JobsPage() {
             </button>
             <div className="my-1 h-px bg-gray-200" />
             <button
-              onClick={() => {
+              onClick={(event) => {
+                event.stopPropagation()
                 handleDelete(job.id)
                 setOpenMenuId(null)
               }}
@@ -647,69 +659,70 @@ export default function JobsPage() {
   )
 
   return (
-    <div className="min-h-screen bg-[#f7f7f7] pb-12">
-      <div className="bg-white border-b border-gray-200 shadow-sm -mx-4 md:-mx-8 px-4 md:px-8 mb-8">
-        <div className="flex w-full flex-col gap-4 py-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="text-sm text-gray-500">Dashboard / Vagas</div>
-            <h1 className="mt-2 text-2xl font-semibold text-gray-900">Gerenciar Vagas</h1>
-            <p className="text-sm text-gray-600">Gerencie todas as vagas em um só lugar</p>
+    <div className="min-h-screen space-y-12 bg-[hsl(var(--background))] pb-12">
+      <section className="w-full rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 px-6 py-8 shadow-[0_26px_55px_-40px_rgba(15,23,42,0.5)] sm:px-8 lg:px-10">
+        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-3">
+            <span className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Dashboard / Vagas</span>
+            <h1 className="text-3xl font-semibold tracking-tight text-[hsl(var(--foreground))] sm:text-4xl">Gerenciar Vagas</h1>
+            <p className="text-sm text-[hsl(var(--muted-foreground))]">Gerencie todas as vagas em um só lugar</p>
           </div>
-          <div className="flex items-center gap-3">
-            <button className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+          <div className="flex flex-wrap items-center gap-3">
+            <button className="btn btn-outline px-6 py-3 text-sm sm:text-base">
               Exportar
             </button>
-            <Link href="/jobs/new" className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700">
+            <Link href="/jobs/new" className="btn btn-primary px-6 py-3 text-sm sm:text-base">
               Nova Vaga
             </Link>
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-10">
+        <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
+            <p className="text-sm font-medium text-[hsl(var(--muted-foreground))]">Total de Vagas</p>
+            <p className="mt-3 text-3xl font-semibold tracking-tight text-[hsl(var(--foreground))] sm:text-4xl">{stats?.total_jobs ?? '—'}</p>
+            <p className="mt-2 text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">+2 esta semana</p>
+          </div>
+          <div className="rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
+            <p className="text-sm font-medium text-[hsl(var(--muted-foreground))]">Vagas Ativas</p>
+            <p className="mt-3 text-3xl font-semibold tracking-tight text-[hsl(var(--foreground))] sm:text-4xl">{stats?.active_jobs ?? '—'}</p>
+            <p className="mt-2 text-xs uppercase tracking-wide text-[hsl(var(--primary))]">Recebendo candidatos</p>
+          </div>
+          <div className="rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
+            <p className="text-sm font-medium text-[hsl(var(--muted-foreground))]">Candidatos</p>
+            <p className="mt-3 text-3xl font-semibold tracking-tight text-[hsl(var(--foreground))] sm:text-4xl">{stats?.total_candidates ?? '—'}</p>
+            <p className="mt-2 text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Total de aplicações</p>
           </div>
         </div>
 
-      <div className="space-y-8">
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="text-sm text-gray-500">Total de Vagas</div>
-            <div className="mt-2 text-3xl font-semibold text-gray-900">{stats?.total_jobs ?? '—'}</div>
-            <div className="text-xs text-gray-400 mt-1">+2 esta semana</div>
-          </div>
-          <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="text-sm text-gray-500">Vagas Ativas</div>
-            <div className="mt-2 text-3xl font-semibold text-gray-900">{stats?.active_jobs ?? '—'}</div>
-            <div className="text-xs text-green-600 mt-1">Recebendo candidatos</div>
-          </div>
-          <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="text-sm text-gray-500">Candidatos</div>
-            <div className="mt-2 text-3xl font-semibold text-gray-900">{stats?.total_candidates ?? '—'}</div>
-            <div className="text-xs text-gray-400 mt-1">Total de aplicações</div>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-3">
+        <div className="rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_26px_55px_-40px_rgba(15,23,42,0.5)] sm:p-8">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              className={`btn px-4 py-2 text-sm sm:text-base ${viewMode === 'table' ? 'bg-[hsl(var(--foreground))] text-[hsl(var(--background))]' : 'btn-outline'}`}
+              onClick={() => setViewMode('table')}
+              aria-label="Exibir em tabela"
+            >
+              <span aria-hidden className="text-lg leading-none">≣</span>
+            </button>
               <button
-                className={`rounded-lg px-4 py-2 text-sm font-medium ${viewMode === 'table' ? 'bg-gray-900 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}
-                onClick={() => setViewMode('table')}
-              >
-                Tabela
-              </button>
-              <button
-                className={`rounded-lg px-4 py-2 text-sm font-medium ${viewMode === 'cards' ? 'bg-gray-900 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                className={`btn px-5 py-2.5 text-sm sm:text-base ${viewMode === 'cards' ? 'bg-[hsl(var(--foreground))] text-[hsl(var(--background))]' : 'btn-outline'}`}
                 onClick={() => setViewMode('cards')}
               >
                 Cards
               </button>
             </div>
-            <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <div className="flex w-full flex-col gap-3 lg:w-auto lg:flex-row lg:items-center lg:gap-4">
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar vagas..."
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
+                className="w-full rounded-2xl border border-[hsl(var(--border))] px-4 py-2.5 text-sm text-[hsl(var(--foreground))] focus:border-[hsl(var(--ring))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]/30 lg:w-80 xl:w-[26rem]"
               />
               <select
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
+                className="w-full rounded-2xl border border-[hsl(var(--border))] px-4 py-2.5 text-sm text-[hsl(var(--foreground))] focus:border-[hsl(var(--ring))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]/30 lg:w-64"
                 value={statusFilter}
                 onChange={(e) => {
                   setStatusFilter(e.target.value as 'open' | 'paused' | 'closed' | '')
@@ -720,132 +733,143 @@ export default function JobsPage() {
                 <option value="open">Ativa</option>
                 <option value="paused">Pausada</option>
                 <option value="closed">Encerrada</option>
-                    </select>
-              <button onClick={applyFilters} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+              </select>
+              <button onClick={applyFilters} className="btn btn-outline px-6 py-2.5 text-sm sm:text-base">
                 Aplicar
               </button>
-                  </div>
-                  </div>
+            </div>
+          </div>
 
           {viewMode === 'cards' ? (
             error ? (
-              <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">{error}</div>
+              <div className="mt-6 w-full rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-10 text-center text-sm text-[hsl(var(--muted-foreground))]">{error}</div>
             ) : filteredJobs.length === 0 ? (
-              <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">Nenhuma vaga encontrada.</div>
+              <div className="mt-6 w-full rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-10 text-center text-sm text-[hsl(var(--muted-foreground))]">Nenhuma vaga encontrada.</div>
             ) : (
-              <div className="mt-6 grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-                {filteredJobs.map((job) => (
-                  <div key={job.id} className="flex h-full flex-col justify-between rounded-2xl border border-gray-200 bg-white p-6 shadow-sm transition hover:shadow-md">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="space-y-2">
-                        <div className="text-sm font-semibold uppercase tracking-wide text-gray-400">{job.department || 'Sem departamento'}</div>
-                        <div className="text-lg font-semibold text-gray-900">{job.title}</div>
-                        {job.salary && <div className="text-sm text-gray-600">{job.salary}</div>}
-                        {job.description && <p className="text-sm text-gray-500 line-clamp-3">{job.description}</p>}
-                  </div>
-                      <div className="-mr-2">{renderActions(job)}</div>
-                  </div>
-                    <div className="mt-6 grid grid-cols-2 gap-4 text-sm text-gray-600">
-                  <div>
-                        <div className="text-xs uppercase tracking-wide text-gray-400">Status</div>
-                        <span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses[job.status]}`}>
-                          {statusLabels[job.status]}
-                        </span>
-                  </div>
-                  <div>
-                        <div className="text-xs uppercase tracking-wide text-gray-400">Candidatos</div>
-                        <div className="mt-1 text-base font-semibold text-gray-900">{job.applications_count ?? 0}</div>
-                  </div>
-                  <div>
-                        <div className="text-xs uppercase tracking-wide text-gray-400">Localização</div>
-                        <div className="mt-1 text-sm text-gray-600">{job.location || '—'}</div>
-                  </div>
-                  <div>
-                        <div className="text-xs uppercase tracking-wide text-gray-400">Publicada</div>
-                        <div className="mt-1 text-sm text-gray-600">{formatDate(job.created_at)}</div>
-                    </div>
-                  </div>
-                      </div>
-                    ))}
+              <div className="mt-8 grid gap-8 sm:grid-cols-2 xl:grid-cols-3">
+                {filteredJobs.map((job) => {
+                  const jobHref = `/jobs/${job.id}`
+                  return (
+                    <div key={job.id} className="relative">
+                      <Link
+                        href={jobHref}
+                        className="group block h-full rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_24px_45px_-32px_rgba(15,23,42,0.45)] transition hover:-translate-y-1 hover:shadow-[0_28px_55px_-34px_rgba(15,23,42,0.55)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                      >
+                        <div className="space-y-2 pr-8">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">{job.department || 'Sem departamento'}</p>
+                          <p className="text-xl font-semibold tracking-tight text-[hsl(var(--foreground))] group-hover:text-[hsl(var(--foreground))]/90">{job.title}</p>
+                          {job.salary && <p className="text-sm text-[hsl(var(--muted-foreground))]">{job.salary}</p>}
+                          {job.description && <p className="text-sm text-[hsl(var(--muted-foreground))] line-clamp-3">{job.description}</p>}
+                        </div>
+                        <div className="mt-6 grid grid-cols-2 gap-4 text-sm text-[hsl(var(--muted-foreground))]">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Status</p>
+                            <span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses[job.status]}`}>
+                              {statusLabels[job.status]}
+                            </span>
                           </div>
-                        )
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Candidatos</p>
+                            <p className="mt-1 text-base font-semibold text-[hsl(var(--foreground))]">{job.applications_count ?? 0}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Localização</p>
+                            <p className="mt-1 text-sm text-[hsl(var(--foreground))]">{job.location || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Publicada</p>
+                            <p className="mt-1 text-sm text-[hsl(var(--foreground))]">{formatDate(job.created_at)}</p>
+                          </div>
+                        </div>
+                      </Link>
+                      <div className="absolute right-4 top-4">{renderActions(job)}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            )
           ) : (
-            <div className="mt-6 overflow-x-auto">
-              <table className="min-w-full table-auto text-sm">
-                <thead className="bg-gray-50 text-left text-gray-600">
+            <div className="mt-8 w-full overflow-x-auto">
+              <table className="min-w-full table-auto text-sm sm:text-base">
+                <thead className="bg-[hsl(var(--muted))] text-left text-[hsl(var(--muted-foreground))]">
                   <tr>
-                  <th className="py-3 px-5">Vaga</th>
-                    <th className="hidden py-3 px-5 lg:table-cell">Departamento</th>
-                    <th className="hidden py-3 px-5 xl:table-cell">Localização</th>
-                  <th className="py-3 px-5">Status</th>
-                  <th className="py-3 px-5">Candidatos</th>
-                  <th className="py-3 px-5">Publicada</th>
-                    <th className="py-3 px-5 text-right whitespace-nowrap">Ações</th>
-                </tr>
-              </thead>
-                <tbody className="bg-white">
+                    <th className="py-3 px-5 sm:py-4 sm:px-6">Vaga</th>
+                    <th className="hidden py-3 px-5 sm:py-4 sm:px-6 lg:table-cell">Departamento</th>
+                    <th className="hidden py-3 px-5 sm:py-4 sm:px-6 xl:table-cell">Localização</th>
+                    <th className="py-3 px-5 sm:py-4 sm:px-6">Status</th>
+                    <th className="py-3 px-5 sm:py-4 sm:px-6">Candidatos</th>
+                    <th className="py-3 px-5 sm:py-4 sm:px-6">Publicada</th>
+                    <th className="whitespace-nowrap py-3 px-5 sm:py-4 sm:px-6 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-[hsl(var(--card))]">
                   {error ? (
                     <tr>
-                      <td colSpan={7} className="py-10 text-center text-sm text-gray-500">{error}</td>
+                      <td colSpan={7} className="py-10 text-center text-sm text-[hsl(var(--muted-foreground))]">{error}</td>
                     </tr>
                   ) : filteredJobs.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-10 text-center text-sm text-gray-500">Nenhuma vaga encontrada.</td>
+                      <td colSpan={7} className="py-10 text-center text-sm text-[hsl(var(--muted-foreground))]">Nenhuma vaga encontrada.</td>
                     </tr>
                   ) : (
                     filteredJobs.map((job) => (
-                      <tr key={job.id} className="border-b border-gray-100 hover:bg-gray-50/60">
-                      <td className="py-4 px-5 align-top">
-                          <div className="font-medium text-gray-900">{job.title}</div>
-                          {job.salary && <div className="text-xs text-gray-500 mt-1">{job.salary}</div>}
-                          {job.description && <div className="text-xs text-gray-500 mt-1 line-clamp-1">{job.description}</div>}
-                      </td>
-                        <td className="hidden py-4 px-5 align-top lg:table-cell">{job.department || '—'}</td>
-                        <td className="hidden py-4 px-5 align-top xl:table-cell">{job.location || '—'}</td>
-                      <td className="py-4 px-5 align-top">
+                      <tr key={job.id} className="border-b border-[hsl(var(--border))] hover:bg-[hsl(var(--muted))]/60">
+                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top">
+                          <Link
+                            href={`/jobs/${job.id}`}
+                            className="font-medium text-[hsl(var(--foreground))] hover:text-[hsl(var(--foreground))]/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                          >
+                            {job.title}
+                          </Link>
+                          {job.salary && <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{job.salary}</p>}
+                          {job.description && <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))] line-clamp-1">{job.description}</p>}
+                        </td>
+                        <td className="hidden py-4 px-5 sm:py-5 sm:px-6 align-top lg:table-cell">{job.department || '—'}</td>
+                        <td className="hidden py-4 px-5 sm:py-5 sm:px-6 align-top xl:table-cell">{job.location || '—'}</td>
+                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top">
                           <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses[job.status]}`}>
                             {statusLabels[job.status]}
                           </span>
-                      </td>
-                      <td className="py-4 px-5 align-top">
-                          <div className="text-sm font-medium text-gray-900">{job.applications_count ?? 0}</div>
-                          <div className="text-xs text-gray-500">candidato(s)</div>
                         </td>
-                        <td className="py-4 px-5 align-top">{formatDate(job.created_at)}</td>
-                        <td className="py-4 px-5 align-top text-right whitespace-nowrap">
+                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top">
+                          <p className="text-sm font-medium text-[hsl(var(--foreground))]">{job.applications_count ?? 0}</p>
+                          <p className="text-xs text-[hsl(var(--muted-foreground))]">candidato(s)</p>
+                        </td>
+                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top">{formatDate(job.created_at)}</td>
+                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top text-right">
                           {renderActions(job)}
-                      </td>
-                    </tr>
+                        </td>
+                      </tr>
                     ))
                   )}
-              </tbody>
-            </table>
+                </tbody>
+              </table>
             </div>
           )}
         </div>
 
         {total > pageSize && (
-          <div className="flex items-center justify-center gap-4 pt-4">
+          <div className="flex flex-wrap items-center justify-center gap-4 pt-4 sm:gap-6 sm:pt-6">
             <button
               disabled={page <= 1}
               onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="btn btn-outline px-5 py-2.5 text-sm sm:px-6 sm:py-3 sm:text-base disabled:opacity-50"
             >
               ← Anterior
             </button>
-            <span className="text-sm text-gray-600">
+            <span className="text-sm text-[hsl(var(--muted-foreground))] sm:text-base">
               Página {page} de {Math.max(1, Math.ceil(total / pageSize))}
             </span>
             <button
               disabled={page >= Math.ceil(total / pageSize)}
               onClick={() => setPage((prev) => prev + 1)}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="btn btn-outline px-5 py-2.5 text-sm sm:px-6 sm:py-3 sm:text-base disabled:opacity-50"
             >
               Próxima →
             </button>
           </div>
         )}
-      </div>
+      </section>
 
       {editingJobId && (
         <EditJobModal

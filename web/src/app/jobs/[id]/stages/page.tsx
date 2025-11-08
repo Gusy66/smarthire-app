@@ -125,7 +125,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
 
   // Candidates assigned to the job (simplificado: todos candidatos do tenant)
   const [candidates, setCandidates] = useState<Candidate[]>([])
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
+  const [candidateSearch, setCandidateSearch] = useState('')
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([])
   const [applications, setApplications] = useState<any[]>([])
   
   // Candidato selecionado para cada etapa
@@ -244,13 +245,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     }
   }
 
-  const selectedCandidate = useMemo(() => candidates.find((c) => c.id === selectedCandidateId) || null, [candidates, selectedCandidateId])
-  const selectedApplicationId = useMemo(() => {
-    if (!selectedCandidateId) return null
-    const app = applications.find((a) => a.candidate_id === selectedCandidateId)
-    return app?.id || null
-  }, [applications, selectedCandidateId])
-
   // Função para obter application_id de um candidato específico
   const getApplicationId = useCallback((candidateId: string | null) => {
     if (!candidateId) return null
@@ -368,39 +362,96 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     loadAnalysisForStage(stageId, candidateId)
   }, [loadAnalysisForStage])
 
-  async function assignCandidate() {
-    if (!jobId || !selectedCandidateId) return
-    // Criar application
-    const appData = await api<{ id: string }>(`/api/jobs/${jobId}/applications`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ candidate_id: selectedCandidateId }),
+  useEffect(() => {
+    setSelectedCandidateIds((prev) => prev.filter((id) => !applications.some((app) => app.candidate_id === id)))
+  }, [applications])
+
+  const availableCandidates = useMemo(
+    () => candidates.filter((c) => !applications.some((app) => app.candidate_id === c.id)),
+    [candidates, applications],
+  )
+
+  const filteredCandidates = useMemo(() => {
+    const query = candidateSearch.trim().toLowerCase()
+    if (!query) return availableCandidates
+    return availableCandidates.filter((c) => {
+      const name = c.name?.toLowerCase() ?? ''
+      const email = c.email?.toLowerCase() ?? ''
+      return name.includes(query) || email.includes(query) || c.id.toLowerCase().includes(query)
     })
-    const appId = appData?.id
-    
-    // Adicionar candidato à primeira etapa automaticamente
-    if (appId && stages.length > 0) {
-      const firstStageId = stages[0].id
+  }, [availableCandidates, candidateSearch])
+
+  const toggleCandidateSelection = (candidateId: string) => {
+    setSelectedCandidateIds((prev) =>
+      prev.includes(candidateId) ? prev.filter((id) => id !== candidateId) : [...prev, candidateId],
+    )
+  }
+
+  async function assignCandidate() {
+    if (!jobId || selectedCandidateIds.length === 0) return
+
+    const firstStageId = stages[0]?.id ?? null
+    let successCount = 0
+
+    for (const candidateId of selectedCandidateIds) {
       try {
-        await fetch('/api/applications/stages', {
+        const appData = await api<{ id: string }>(`/api/jobs/${jobId}/applications`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ application_id: appId, stage_id: firstStageId }),
+          body: JSON.stringify({ candidate_id: candidateId }),
         })
-      } catch (error) {
-        console.error('Erro ao adicionar candidato à primeira etapa:', error)
+        const appId = appData?.id
+
+        if (appId && firstStageId) {
+          try {
+            await fetch('/api/applications/stages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ application_id: appId, stage_id: firstStageId }),
+            })
+          } catch (error) {
+            console.error('Erro ao adicionar candidato à primeira etapa:', error)
+          }
+        }
+
+        successCount += 1
+      } catch (error: any) {
+        console.error('Erro ao atribuir candidato à vaga:', error)
+        notify({
+          title: 'Erro ao atribuir candidato',
+          description: error?.message || 'Não foi possível atribuir um dos candidatos selecionados.',
+          variant: 'error',
+        })
       }
     }
-    
-    const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r) => r.json())
+
+    const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r) => r.json()).catch(() => ({ items: [] }))
     setApplications(apps.items || [])
-    
-    // Recarregar board para exibir candidato na primeira etapa
+
     const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
-    if (b) { setBoard(b as any) }
-    
-    notify({ title: 'Candidato atribuído', variant: 'success' })
-    setSelectedCandidateId(null)
+    if (b) {
+      setBoard(b as any)
+    }
+
+    if (firstStageId) {
+      setActiveTab(firstStageId)
+      if (selectedCandidateIds[0]) {
+        setStageSelectedCandidates((prev) => ({ ...prev, [firstStageId]: selectedCandidateIds[0] }))
+      }
+    }
+
+    setSelectedCandidateIds([])
+
+    if (successCount > 0) {
+      notify({
+        title: successCount > 1 ? 'Candidatos atribuídos' : 'Candidato atribuído',
+        description:
+          successCount > 1
+            ? `${successCount} candidatos foram movidos para o início do processo seletivo.`
+            : 'O candidato foi movido para a primeira etapa.',
+        variant: 'success',
+      })
+    }
   }
 
   return (
@@ -409,8 +460,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       <div className="bg-white border-b border-gray-200 shadow-sm -mx-4 md:-mx-8 px-4 md:px-8 mb-8">
         <div className="flex w-full flex-col gap-4 py-6 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-sm text-gray-500">Vagas / Etapas</div>
-            <h1 className="mt-2 text-2xl font-semibold text-gray-900">Gerenciar Etapas</h1>
+            <div className="text-sm text-gray-500">Vagas / Processo seletivo</div>
+            <h1 className="mt-2 text-2xl font-semibold text-gray-900">Processo Seletivo</h1>
             <p className="text-sm text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
           </div>
           {jobId && (
@@ -480,23 +531,28 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                 <div className="flex-1">
                   <select
-                    className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
-                    value={selectedCandidateId ?? ''}
-                    onChange={(e) => setSelectedCandidateId(e.target.value || null)}
+                    multiple
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20 min-h-[160px]"
+                    value={selectedCandidateIds}
+                    onChange={(e) =>
+                      setSelectedCandidateIds(Array.from(e.target.selectedOptions).map((option) => option.value))
+                    }
                   >
-                    <option value="">Selecione um candidato</option>
                     {candidates
-                      .filter(c => !applications.some(app => app.candidate_id === c.id))
+                      .filter((c) => !applications.some((app) => app.candidate_id === c.id))
                       .map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name} {c.email ? `(${c.email})` : ''}
                         </option>
                       ))}
                   </select>
+                  <p className="mt-2 text-xs text-gray-500">
+                    Use Ctrl/⌘ para selecionar vários candidatos e clique em “Atribuir à vaga”.
+                  </p>
                 </div>
                 <button 
                   onClick={assignCandidate} 
-                  disabled={!selectedCandidateId}
+                  disabled={selectedCandidateIds.length === 0}
                   className="rounded-lg bg-green-600 px-6 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                 >
                   Atribuir à vaga

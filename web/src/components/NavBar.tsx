@@ -21,9 +21,9 @@ export default function NavBar() {
 
   return (
     <>
-      <header className="full-bleed border-b border-gray-200 bg-white/95 shadow-sm backdrop-blur">
-        <div className="mx-auto flex h-16 w-full max-w-[120rem] items-center justify-between px-6 md:px-12 lg:px-20">
-          <a href="/" className="text-2xl font-bold text-gradient">
+      <header className="full-bleed border-b border-[hsl(var(--border))] bg-[hsl(var(--background))]/85 shadow-[0_18px_45px_-32px_rgba(15,23,42,0.55)] backdrop-blur-sm">
+        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 md:px-8 lg:px-12">
+          <a href="/" className="text-2xl font-semibold tracking-tight text-gradient">
             SmartHire
           </a>
           <div className="hidden items-center gap-6 md:flex">
@@ -35,7 +35,7 @@ export default function NavBar() {
             <AuthStatus />
           </div>
           <button
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 text-gray-600 transition hover:bg-gray-50 md:hidden"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] transition hover:bg-[hsl(var(--muted))] md:hidden"
             onClick={() => setMobileOpen((prev) => !prev)}
             aria-label="Abrir menu"
             aria-expanded={mobileOpen}
@@ -53,14 +53,18 @@ export default function NavBar() {
         </div>
       </header>
       {mobileOpen && (
-        <div className="full-bleed border-b border-gray-200 bg-white shadow-sm md:hidden">
-          <div className="mx-auto flex w-full max-w-[120rem] flex-col gap-4 px-6 py-4">
+        <div className="full-bleed border-b border-[hsl(var(--border))] bg-[hsl(var(--background))] shadow-[0_20px_50px_-35px_rgba(15,23,42,0.5)] md:hidden">
+          <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4">
             {links.map((link) => (
-              <a key={link.href} href={link.href} className="text-sm font-medium text-gray-700 transition hover:text-gray-900">
+              <a
+                key={link.href}
+                href={link.href}
+                className="text-sm font-medium text-[hsl(var(--muted-foreground))] transition hover:text-[hsl(var(--foreground))]"
+              >
                 {link.label}
               </a>
             ))}
-            <div className="border-t border-gray-200 pt-4">
+            <div className="border-t border-[hsl(var(--border))] pt-4">
               <AuthStatus variant="mobile" />
             </div>
           </div>

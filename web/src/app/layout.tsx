@@ -28,7 +28,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR" className="h-full">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-[hsl(var(--background))] text-[hsl(var(--foreground))]`}
+      >
         <AuthSessionSync />
         <ToastProvider>
           {/* NavBar para mobile */}
@@ -37,10 +39,10 @@ export default function RootLayout({
           </div>
           
           {/* Layout desktop com Sidebar + Main, mobile com só main */}
-          <div className="flex min-h-screen md:min-h-[calc(100vh-0)]">
+          <div className="flex min-h-screen md:min-h-[calc(100vh-0)] bg-[hsl(var(--background))]">
             <Sidebar />
-            <main className="flex-1 w-full py-6 px-4 md:px-8 pt-16 md:pt-6">
-              <div className="container-page max-w-none">
+            <main className="flex-1 w-full px-4 py-8 pt-16 md:px-10 md:py-12 md:pt-8 bg-transparent">
+              <div className="container-page max-w-7xl space-y-8">
                 {children}
               </div>
             </main>
