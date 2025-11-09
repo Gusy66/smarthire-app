@@ -1,0 +1,2 @@
+nome,email,telefone,vaga_titulo,etapa_nome,cidade,estado,genero,idiomas,formacao
+"Seu Nome","seu.email@example.com","(XX) XXXXX-XXXX","Nome da Vaga","Triagem","Cidade","UF","Masculino/Feminino/Outro","Idiomas separados por vírgula","Descrição da formação"
