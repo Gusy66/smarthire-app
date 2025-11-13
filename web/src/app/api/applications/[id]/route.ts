@@ -45,6 +45,11 @@ export async function GET(_req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'not_found', message: 'Aplicação não encontrada' } }, { status: 404 })
   }
 
+  if (data?.candidate?.resume_path && data.candidate.resume_bucket) {
+    data.candidate.resume_path = normalizeStoragePath(data.candidate.resume_path, data.candidate.resume_bucket)
+    data.candidate.storage_path = `${data.candidate.resume_bucket}/${data.candidate.resume_path}`
+  }
+
   return Response.json({ item: data })
 }
 
@@ -54,6 +59,13 @@ export async function DELETE(_: NextRequest, { params }: Params) {
   const { error } = await supabase.from('applications').delete().eq('id', id)
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
   return Response.json({ ok: true })
+}
+
+function normalizeStoragePath(path: string, bucket: string) {
+  if (!path) return path
+  const prefix = `${bucket}/`
+  const cleaned = path.startsWith(prefix) ? path.slice(prefix.length) : path
+  return cleaned.replace(/^\/+/, '')
 }
 
 

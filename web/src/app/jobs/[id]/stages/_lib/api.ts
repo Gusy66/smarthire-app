@@ -20,10 +20,17 @@ export async function moveBulk(jobId: string, applicationStageIds: string[], toS
   }
 }
 
-export async function getLatestAnalysis(stageId: string, applicationStageId: string): Promise<LatestAnalysis | null> {
-  const url = `/api/stages/${stageId}/analysis/latest?application_stage_id=${encodeURIComponent(applicationStageId)}`
+export async function getLatestAnalysis(
+  stageId: string,
+  params?: { applicationStageId?: string; applicationId?: string },
+): Promise<LatestAnalysis | null> {
+  const search = new URLSearchParams()
+  if (params?.applicationStageId) search.set('application_stage_id', params.applicationStageId)
+  if (params?.applicationId) search.set('application_id', params.applicationId)
+  const query = search.toString()
+  const url = `/api/stages/${stageId}/analysis/latest${query ? `?${query}` : ''}`
   const res = await fetch(url, { credentials: 'same-origin' })
-  const json = await res.json().catch(()=>null)
+  const json = await res.json().catch(() => null)
   if (!res.ok) {
     if (json?.error?.code === 'not_found') return null
     throw new Error(json?.error?.message || 'Falha ao carregar análise')

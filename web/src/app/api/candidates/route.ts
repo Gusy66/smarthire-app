@@ -30,7 +30,11 @@ export async function GET(req: NextRequest) {
   query = query.order('created_at', { ascending: false }).range(from, to)
   const { data, error, count } = await query
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
-  const candidates = (data ?? []).filter((c) => (c.created_by ?? user.id) === user.id)
+  const filteredCandidates = (data ?? []).filter((c) => (c.created_by ?? user.id) === user.id)
+  const candidates = filteredCandidates.map((c) => ({
+    ...c,
+    resume_path: normalizeStoragePath(c.resume_path, c.resume_bucket),
+  }))
 
   // enriquecer com métricas: vaga mais recente, última atividade e média de score
   const candidateIds = candidates.map((c) => c.id)
@@ -178,7 +182,7 @@ export async function POST(req: NextRequest) {
       gender,
       languages: languages || [],
       education,
-      resume_path,
+      resume_path: normalizeStoragePath(resume_path, resume_bucket),
       resume_bucket,
       company_id: user.company_id,
       created_by: user.id,
@@ -215,6 +219,14 @@ export async function POST(req: NextRequest) {
   }
 
   return Response.json({ id: candidate.id })
+}
+
+function normalizeStoragePath(path: string | null, bucket: string | null) {
+  if (!path) return null
+  if (!bucket) return path.replace(/^\/+/, '')
+  const prefix = `${bucket}/`
+  const cleaned = path.startsWith(prefix) ? path.slice(prefix.length) : path
+  return cleaned.replace(/^\/+/, '')
 }
 
 

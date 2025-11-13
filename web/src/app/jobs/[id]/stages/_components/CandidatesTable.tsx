@@ -20,7 +20,7 @@ export default function CandidatesTable({
   filters?: { query?: string; status?: string; source?: string }
 }) {
   const [query, setQuery] = useState('')
-  const [drawer, setDrawer] = useState<{ open: boolean; item: BoardLaneItem | null }>({ open: false, item: null })
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
     const base = items
@@ -43,72 +43,123 @@ export default function CandidatesTable({
     setSelectedMap(next)
   }
 
+  function toggleExpanded(item: BoardLaneItem) {
+    setExpandedId((prev) => {
+      const next = prev === item.application_stage_id ? null : item.application_stage_id
+      if (next) onSelect?.(item)
+      return next
+    })
+  }
+
   return (
     <div className="card p-0">
-      <div className="px-6 py-4 border-b flex items-center gap-3">
-        <input className="w-full" placeholder="Buscar candidatos nesta etapa..." value={query} onChange={(e)=>setQuery(e.target.value)} />
-        <span className="text-xs text-gray-500">{filtered.length} de {items.length}</span>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-left text-gray-600">
-            <tr className="border-b">
-              <th className="py-3 px-5"><input type="checkbox" checked={allChecked} onChange={(e)=>toggleAll(e.target.checked)} /></th>
-              <th className="py-3 px-5">Candidato</th>
-              <th className="py-3 px-5">Nota IA</th>
-              <th className="py-3 px-5 text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((it) => {
-              const checked = !!selectedMap[it.application_stage_id]
-              return (
-                <tr key={it.application_stage_id} className="border-b hover:bg-gray-50/50">
-                  <td className="py-3 px-5"><input type="checkbox" checked={checked} onChange={(e)=>setSelectedMap({ ...selectedMap, [it.application_stage_id]: e.target.checked })} /></td>
-                  <td className="py-3 px-5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold">
-                        {(it.candidate.name || it.candidate.id).slice(0,2).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="font-medium text-gray-900">{it.candidate.name || it.candidate.id}</div>
-                        {it.candidate.email && <div className="text-xs text-gray-600">{it.candidate.email}</div>}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-3 px-5">
-                    {typeof it.score === 'number' ? (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full bg-green-100 text-green-800 text-xs font-semibold">{it.score.toFixed(1)}</span>
-                    ) : (
-                      <span className="text-gray-500">—</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-5">
-                    <div className="flex items-center gap-2 justify-end">
-                      <button className="p-2 rounded-full border border-gray-200 hover:bg-gray-100" title="Visualizar" onClick={()=>{ onSelect?.(it); setDrawer({ open: true, item: it }) }}>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-gray-700"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+      <div className="px-6 py-4 border-b flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex w-full items-center gap-3">
+          <input
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900/10"
+            placeholder="Buscar candidatos nesta etapa..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <span className="text-xs font-medium text-gray-500 whitespace-nowrap">
+            {filtered.length} de {items.length}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-gray-500">
+          <input
+            type="checkbox"
+            checked={allChecked}
+            onChange={(e) => toggleAll(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+          />
+          Selecionar todos
+        </div>
       </div>
 
-      {drawer.open && drawer.item && (
-        <CandidateDrawer
-          open={drawer.open}
-          onClose={()=>setDrawer({ open: false, item: null })}
-          stageId={stage.id}
-          applicationId={drawer.item.application_id}
-          applicationStageId={drawer.item.application_stage_id}
-          candidate={{ id: drawer.item.candidate.id, name: drawer.item.candidate.name, email: drawer.item.candidate.email }}
-        />
-      )}
+      <div className="space-y-4 px-4 py-6">
+        {filtered.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-6 py-10 text-center">
+            <p className="text-sm text-gray-600">Nenhum candidato encontrado com os filtros atuais.</p>
+          </div>
+        ) : (
+          filtered.map((it) => {
+            const checked = !!selectedMap[it.application_stage_id]
+            const expanded = expandedId === it.application_stage_id
+            const initials = (it.candidate.name || it.candidate.id).slice(0, 2).toUpperCase()
+
+            return (
+              <div key={it.application_stage_id} className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+                <div className="flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                  <div className="flex flex-1 items-start gap-4">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) =>
+                        setSelectedMap({ ...selectedMap, [it.application_stage_id]: e.target.checked })
+                      }
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+                    />
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-base font-semibold text-emerald-700">
+                        {initials}
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900">
+                          {it.candidate.name || it.candidate.id}
+                        </div>
+                        {it.candidate.email && (
+                          <div className="text-xs text-gray-500">{it.candidate.email}</div>
+                        )}
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 font-medium text-gray-600">
+                            {stage.name}
+                          </span>
+                          {typeof it.score === 'number' ? (
+                            <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-700">
+                              {it.score.toFixed(1)} pts
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-gray-500">
+                              Sem nota
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleExpanded(it)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
+                    >
+                      {expanded ? 'Ocultar análise' : 'Ver análise'}
+                    </button>
+                  </div>
+                </div>
+
+                {expanded && (
+                  <div className="border-t border-gray-100 bg-gray-50 px-4 py-4">
+                    <CandidateDrawer
+                      open={expanded}
+                      onClose={() => setExpandedId(null)}
+                      stageId={stage.id}
+                      applicationId={it.application_id}
+                      applicationStageId={it.application_stage_id}
+                      candidate={{
+                        id: it.candidate.id,
+                        name: it.candidate.name,
+                        email: it.candidate.email,
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )
+          })
+        )}
+      </div>
     </div>
   )
 }
-
-

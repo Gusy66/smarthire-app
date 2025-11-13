@@ -23,7 +23,7 @@ export default function AnalysisSplitPane({
   useEffect(() => {
     if (!stageId || !selection) { setAnalysis(null); return }
     setLoading(true)
-    getLatestAnalysis(stageId, selection.application_stage_id)
+    getLatestAnalysis(stageId, { applicationStageId: selection.application_stage_id })
       .then(setAnalysis)
       .catch((e)=>notify({ title: 'Erro ao carregar análise', description: e?.message, variant: 'error' }))
       .finally(()=>setLoading(false))
@@ -34,7 +34,7 @@ export default function AnalysisSplitPane({
     try {
       await evaluate(stageId, { application_id: selection.application_id, application_stage_id: selection.application_stage_id, candidate_id: selection.candidate.id })
       notify({ title: 'Reavaliação iniciada', variant: 'success' })
-      const latest = await getLatestAnalysis(stageId, selection.application_stage_id)
+      const latest = await getLatestAnalysis(stageId, { applicationStageId: selection.application_stage_id })
       setAnalysis(latest)
       onRefreshed?.()
     } catch (e: any) {

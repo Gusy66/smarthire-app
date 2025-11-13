@@ -6,6 +6,9 @@ type Params = { params: Promise<{ stageId: string }> }
 
 export async function GET(req: NextRequest, { params }: Params) {
   const { stageId } = await params
+  const { searchParams } = new URL(req.url)
+  const applicationStageFilter = searchParams.get('application_stage_id')
+  const applicationFilter = searchParams.get('application_id')
 
   // Verificar se o usuário está autenticado
   let user
@@ -24,10 +27,15 @@ export async function GET(req: NextRequest, { params }: Params) {
     console.log(`[DEBUG API] Buscando análise mais recente para stageId: ${stageId}`)
     
     // Primeiro, buscar application_stages para esta etapa
-    const { data: appStages, error: appStagesError } = await supabase
+    let appStagesQuery = supabase
       .from('application_stages')
       .select('id, application_id')
       .eq('stage_id', stageId)
+
+    if (applicationStageFilter) appStagesQuery = appStagesQuery.eq('id', applicationStageFilter)
+    if (applicationFilter) appStagesQuery = appStagesQuery.eq('application_id', applicationFilter)
+
+    const { data: appStages, error: appStagesError } = await appStagesQuery
     
     if (appStagesError) {
       console.error('Erro ao buscar application_stages:', appStagesError)
@@ -36,13 +44,13 @@ export async function GET(req: NextRequest, { params }: Params) {
     
     if (!appStages || appStages.length === 0) {
       console.log(`[DEBUG API] Nenhum application_stage encontrado para stageId: ${stageId}`)
-      return Response.json({ error: { code: 'not_found', message: 'Nenhuma análise encontrada para esta etapa' } }, { status: 404 })
+      return Response.json({ item: null })
     }
     
-    // Buscar a análise mais recente para qualquer application_stage desta etapa
-    const { data: analysis, error } = await supabase
+    let runsQuery = supabase
       .from('stage_ai_runs')
-      .select(`
+      .select(
+        `
         id,
         run_id,
         result,
@@ -50,14 +58,20 @@ export async function GET(req: NextRequest, { params }: Params) {
         finished_at,
         created_at,
         application_stage_id
-      `)
-      .in('application_stage_id', appStages.map(app => app.id))
+      `,
+      )
       .eq('type', 'evaluate')
-      .eq('status', 'succeeded')
-      .not('result', 'is', null)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
+
+    if (applicationStageFilter) {
+      runsQuery = runsQuery.eq('application_stage_id', applicationStageFilter)
+    } else {
+      runsQuery = runsQuery.in('application_stage_id', appStages.map((app) => app.id))
+    }
+
+    const { data: analysis, error } = await runsQuery
 
     if (error) {
       console.error('Erro ao buscar análise mais recente:', error)
@@ -68,14 +82,23 @@ export async function GET(req: NextRequest, { params }: Params) {
 
     if (!analysis) {
       console.log(`[DEBUG API] Nenhuma análise encontrada para stageId: ${stageId}`)
-      return Response.json({ error: { code: 'not_found', message: 'Nenhuma análise encontrada para esta etapa' } }, { status: 404 })
+      return Response.json({ item: null })
     }
 
     // Buscar dados do application_stage e candidato
-    const appStage = appStages.find(app => app.id === analysis.application_stage_id)
+    let appStage = appStages.find((app) => app.id === analysis.application_stage_id)
     if (!appStage) {
+      const { data: fetchedAppStage } = await supabase
+        .from('application_stages')
+        .select('id, application_id')
+        .eq('id', analysis.application_stage_id)
+        .maybeSingle()
+
+      if (!fetchedAppStage) {
       console.error('Application stage não encontrado para a análise')
       return Response.json({ error: { code: 'db_error', message: 'Dados inconsistentes' } }, { status: 500 })
+      }
+      appStage = fetchedAppStage
     }
 
     // Buscar dados do candidato
@@ -108,6 +131,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       candidate_id: candidateData.candidate_id,
       candidate_name: candidateData.candidates.name,
       candidate_email: candidateData.candidates.email,
+      status: analysis.status,
       result: analysis.result,
       created_at: analysis.finished_at || analysis.created_at,
     }

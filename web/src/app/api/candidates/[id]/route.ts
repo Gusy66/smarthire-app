@@ -42,10 +42,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'forbidden', message: 'Acesso negado' } }, { status: 403 })
   }
 
+  const normalizedPath = normalizeStoragePath(resume_path, resume_bucket)
+  if (!normalizedPath) {
+    return Response.json({ error: { code: 'validation_error', message: 'resume_path inválido' } }, { status: 400 })
+  }
+
   const { error: updateError } = await supabase
     .from('candidates')
     .update({
-      resume_path,
+      resume_path: normalizedPath,
       resume_bucket,
     })
     .eq('id', candidateId)
@@ -55,6 +60,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   return Response.json({ ok: true })
+}
+
+function normalizeStoragePath(path: string | null, bucket: string | null) {
+  if (!path) return null
+  if (!bucket) return path.replace(/^\/+/, '')
+  const prefix = `${bucket}/`
+  const cleaned = path.startsWith(prefix) ? path.slice(prefix.length) : path
+  return cleaned.replace(/^\/+/, '')
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {

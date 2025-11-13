@@ -9,6 +9,7 @@ type AnalysisResult = {
   id: string
   run_id?: string
   created_at: string
+  status?: 'running' | 'succeeded' | 'failed' | string
   result?: {
     score?: number
     analysis?: string
@@ -18,7 +19,7 @@ type AnalysisResult = {
     weaknesses?: string[]
     recommendations?: string[]
     extraction_warnings?: string[]
-  }
+  } | null
 }
 
 type Props = {
@@ -96,6 +97,7 @@ export default function StageAnalysisPanel({ analysis, candidateName, loading, e
     )
   }
 
+  const status = analysis.status ?? 'succeeded'
   const score = analysis.result?.score ?? null
   const strengths = analysis.result?.strengths ?? []
   const weaknesses = analysis.result?.weaknesses ?? []
@@ -117,6 +119,13 @@ export default function StageAnalysisPanel({ analysis, candidateName, loading, e
           </button>
         </div>
       </header>
+
+      {status === 'running' && (
+        <div className="border border-emerald-200 bg-emerald-50 rounded p-3 text-sm text-emerald-800">
+          <p className="font-semibold">Análise em andamento...</p>
+          <p>A IA está avaliando o candidato. Recarregue em alguns instantes para ver o resultado.</p>
+        </div>
+      )}
 
       {score !== null && (
         <div className="bg-blue-50 border border-blue-200 rounded p-3">

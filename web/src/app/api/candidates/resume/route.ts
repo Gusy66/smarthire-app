@@ -21,8 +21,10 @@ export async function GET(req: NextRequest) {
       return Response.json({ error: { code: 'invalid_bucket', message: 'Bucket inválido' } }, { status: 400 })
     }
 
+    const normalizedPath = normalizeStoragePath(path, bucket)
+
     // Gerar URL assinada do Supabase
-    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60) // 1 hora
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(normalizedPath, 60 * 60) // 1 hora
 
     if (error) {
       return Response.json({ error: { code: 'storage_error', message: error.message } }, { status: 500 })
@@ -33,4 +35,11 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     return Response.json({ error: { code: 'error', message: error instanceof Error ? error.message : 'Erro ao processar requisição' } }, { status: 500 })
   }
+}
+
+function normalizeStoragePath(path: string, bucket: string) {
+  if (!path) return path
+  const prefix = `${bucket}/`
+  const cleaned = path.startsWith(prefix) ? path.slice(prefix.length) : path
+  return cleaned.replace(/^\/+/, '')
 }

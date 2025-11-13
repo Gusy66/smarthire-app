@@ -44,16 +44,19 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const resumes = []
   if (candidate.resume_path && candidate.resume_bucket) {
+    const normalizedPath = normalizeStoragePath(candidate.resume_path, candidate.resume_bucket)
+
     // Gerar URL assinada para download
     const { data: signedUrlData } = await supabase.storage
       .from(candidate.resume_bucket)
-      .createSignedUrl(candidate.resume_path, 60 * 60) // 1 hora
+      .createSignedUrl(normalizedPath, 60 * 60) // 1 hora
 
     resumes.push({
       id: candidate.id,
       candidate_name: candidate.name,
-      resume_path: candidate.resume_path,
+      resume_path: normalizedPath,
       resume_bucket: candidate.resume_bucket,
+      storage_path: `${candidate.resume_bucket}/${normalizedPath}`,
       signed_url: signedUrlData?.signedUrl || null,
       created_at: null, // não temos data de criação do CV, mas podemos usar created_at do candidato
     })
@@ -81,6 +84,7 @@ export async function GET(_: NextRequest, { params }: Params) {
           candidate_name: candidate.name,
           resume_path: path,
           resume_bucket: bucket,
+          storage_path: doc.storage_path,
           signed_url: signedUrlData?.signedUrl || null,
           created_at: doc.created_at,
         })
@@ -89,5 +93,12 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 
   return Response.json({ items: resumes })
+}
+
+function normalizeStoragePath(path: string, bucket: string) {
+  if (!path) return path
+  const prefix = `${bucket}/`
+  const cleaned = path.startsWith(prefix) ? path.slice(prefix.length) : path
+  return cleaned.replace(/^\/+/, '')
 }
 

@@ -412,45 +412,42 @@ async def analyze_candidate_with_openai(
                 f"- {req.get('label', '')}: {req.get('description', '')} (peso: {req.get('weight', 1.0)})"
                 for req in requirements
             ])
+            if not requirements_text.strip():
+                requirements_text = "- Nenhum requisito específico informado; utilize a descrição da etapa como referência principal."
             
             base_prompt = prompt_template or """
-Analise o candidato para a vaga baseado EXCLUSIVAMENTE nas informações fornecidas.
+Analise o candidato para esta etapa do processo seletivo de forma objetiva e baseada EXCLUSIVAMENTE nas informações fornecidas.
 
-DESCRIÇÃO DA ETAPA:
+DESCRIÇÃO DA ETAPA (contexto principal a ser considerado):
 {{STAGE_DESCRIPTION}}
 
-REQUISITOS DA ETAPA:
+REQUISITOS OU EXPECTATIVAS PARA ESTA ETAPA:
 {{REQUIREMENTS_LIST}}
 
-INFORMAÇÕES DO CANDIDATO (CURRÍCULO REAL):
+INFORMAÇÕES DO CANDIDATO (texto real do currículo e anexos):
 {{CANDIDATE_INFO}}
 
-INSTRUÇÕES CRÍTICAS - LEIA ATENTAMENTE:
-1. USE APENAS as informações reais fornecidas no campo "INFORMAÇÕES DO CANDIDATO"
-2. NÃO INVENTE nenhum dado fictício, nome, empresa ou experiência
-3. Se o currículo estiver vazio, mencione explicitamente "CURRÍCULO VAZIO"
-4. Baseie-se EXCLUSIVAMENTE no texto real do currículo fornecido
-5. Se não houver informações específicas, mencione "INFORMAÇÃO NÃO DISPONÍVEL NO CURRÍCULO"
+INSTRUÇÕES CRÍTICAS (obrigatórias):
+1. Utilize a descrição da etapa como referência central para julgar a aderência do candidato.
+2. Compare cada item encontrado no currículo com a descrição/requisitos e explique a relação.
+3. Não invente informações: cite apenas o que estiver explicitamente no currículo.
+4. Se faltar alguma informação relevante, registre explicitamente que ela não aparece no currículo.
+5. Caso o currículo esteja vazio ou ilegível, informe isso claramente e atribua nota 0.
 
-FORMATO DE RESPOSTA OBRIGATÓRIO:
-- Responda APENAS com JSON válido em um dos formatos permitidos:
-  A) Formato novo (campos na raiz):
-     {"score": number, "analysis": string, "strengths": string[], "weaknesses": string[], "matched_requirements": string[], "missing_requirements": string[]}
-  B) Formato antigo (com "avaliacao"):
-     {"avaliacao": {"pontuacao": number, "justificativa": string, "pontos_fortes": string[], "pontos_que_deixam_a_desejar": string[], "requisitos_atendidos": string[], "requisitos_nao_atendidos": string[]}}
-- É ESTRITAMENTE PROIBIDO incluir quaisquer outros campos além dos acima. NÃO inclua campos como "candidato", "nome" ou qualquer campo adicional.
+CRITÉRIO DE PONTUAÇÃO (0 a 10):
+- 0 significa nenhuma aderência aos requisitos ou competências da etapa.
+- 10 significa aderência total aos requisitos e expectativas descritas.
+- Distribua a nota proporcionalmente ao atendimento dos requisitos, considerando pesos quando informados.
+- Justifique a nota citando evidências concretas do currículo relacionadas à descrição da etapa.
 
-REGRAS OBRIGATÓRIAS:
-- Se não encontrar experiências específicas no currículo, liste "Nenhuma experiência específica identificada no currículo"
-- Se não encontrar formação, liste "Formação acadêmica não mencionada no currículo"
-- Se não encontrar habilidades, liste "Habilidades não detalhadas no currículo"
-- Para requisitos: compare exatamente com o que está escrito no currículo fornecido
-- Se o currículo estiver vazio, retorne pontuação 0 e mencione explicitamente
+FORMATO DE RESPOSTA (JSON obrigatório):
+{"score": number, "analysis": string, "strengths": string[], "weaknesses": string[], "matched_requirements": string[], "missing_requirements": string[]}
 
-ORIENTAÇÕES IMPORTANTES:
-- Analise LINHA POR LINHA o conteúdo do currículo
-- Seja específico sobre o que FOI ENCONTRADO vs NÃO FOI ENCONTRADO
-- Não generalize - use apenas o que está escrito no texto fornecido
+REGRAS ADICIONAIS:
+- Liste em "matched_requirements" apenas itens comprovados pelo currículo e que se conectem à descrição.
+- Liste em "missing_requirements" requisitos/competências relevantes que não foram comprovados.
+- Seja específico nas listas: use frases curtas que expliquem a evidência (ou ausência) encontrada.
+- Não inclua campos extras ou comentários fora do JSON solicitado.
 """
 
             prompt = (
@@ -1201,19 +1198,21 @@ async def save_analysis_to_database(run_id: str, analysis_result: dict):
     Salva o resultado da análise no banco de dados
     """
     try:
-        storage_url = os.getenv("SUPABASE_STORAGE_URL")
         service_role = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        
-        if not storage_url or not service_role:
+        base_url = (
+            os.getenv("SUPABASE_URL")
+            or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+            or (os.getenv("SUPABASE_STORAGE_URL") or "").replace("/storage/v1", "")
+        )
+
+        if not base_url or not service_role:
             print(f"[IA] Aviso: Não foi possível salvar análise {run_id} - variáveis de ambiente não configuradas")
             return
-            
-        supabase_url = storage_url.replace("/storage/v1", "")
         
         async with httpx.AsyncClient() as client:
             # Atualizar o registro na tabela stage_ai_runs usando WHERE clause
             response = await client.patch(
-                f"{supabase_url}/rest/v1/stage_ai_runs?run_id=eq.{run_id}",
+                f"{base_url}/rest/v1/stage_ai_runs?run_id=eq.{run_id}",
                 json={
                     "result": analysis_result,
                     "status": "succeeded",

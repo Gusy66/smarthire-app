@@ -13,6 +13,7 @@ export type BoardResponse = { stages: Stage[]; lanes: Record<string, BoardLaneIt
 
 export type LatestAnalysis = {
   run_id?: string
+  status?: 'running' | 'succeeded' | 'failed' | string
   result?: {
     score?: number
     analysis?: string
@@ -20,7 +21,7 @@ export type LatestAnalysis = {
     weaknesses?: string[]
     matched_requirements?: string[]
     missing_requirements?: string[]
-  }
+  } | null
   created_at?: string
 }
 

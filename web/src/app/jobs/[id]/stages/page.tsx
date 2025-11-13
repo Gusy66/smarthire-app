@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useToast } from '@/components/ToastProvider'
 import StageAnalysisPanel from './_components/StageAnalysisPanel'
 import JobStageHeader from './_components/JobStageHeader'
@@ -113,8 +113,10 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const { notify } = useToast()
   const [jobId, setJobId] = useState<string | null>(null)
   const [stages, setStages] = useState<Stage[]>([])
+  const [jobInfo, setJobInfo] = useState<{ id: string; title: string } | null>(null)
   const [creating, setCreating] = useState(false)
   const [activeTab, setActiveTab] = useState<string | null>(null)
+  const [activeMainTab, setActiveMainTab] = useState<'candidatos' | 'etapas'>('candidatos')
   const [board, setBoard] = useState<{ lanes: Record<string, { application_id: string; application_stage_id: string; candidate: any; score: number | null }[]>, stages: Stage[] } | null>(null)
   const [selectedForBulk, setSelectedForBulk] = useState<Record<string, boolean>>({})
   const [filters, setFilters] = useState<CF>({ query: '' })
@@ -137,6 +139,77 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [analysisByStage, setAnalysisByStage] = useState<Record<string, StageAnalysisResult | null>>({})
   const [analysisLoading, setAnalysisLoading] = useState<Record<string, boolean>>({})
   const [analysisExpanded, setAnalysisExpanded] = useState<Record<string, boolean>>({})
+  const pollingTimeouts = useRef<Record<string, number>>({})
+
+  const clearStagePolling = useCallback((stageId: string) => {
+    const existing = pollingTimeouts.current[stageId]
+    if (existing) {
+      window.clearTimeout(existing)
+      delete pollingTimeouts.current[stageId]
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      Object.values(pollingTimeouts.current).forEach((timeoutId) => window.clearTimeout(timeoutId))
+    }
+  }, [])
+
+  const orderedStages = useMemo(() => {
+    return [...stages].sort((a, b) => a.order_index - b.order_index)
+  }, [stages])
+
+  const stageById = useMemo(() => {
+    const map: Record<string, Stage> = {}
+    stages.forEach((stage) => {
+      map[stage.id] = stage
+    })
+    return map
+  }, [stages])
+
+  const laneItemByApplicationId = useMemo(() => {
+    const map: Record<string, { stage_id: string; score: number | null; candidate: any; application_stage_id: string }> = {}
+    if (board?.lanes) {
+      Object.values(board.lanes).forEach((items) => {
+        items.forEach((item) => {
+          map[item.application_id] = {
+            stage_id: item.stage_id,
+            score: item.score,
+            candidate: item.candidate,
+            application_stage_id: item.application_stage_id,
+          }
+        })
+      })
+    }
+    return map
+  }, [board])
+
+  const candidateRows = useMemo(() => {
+    return applications.map((app) => {
+      const laneItem = laneItemByApplicationId[app.id]
+      const stage = laneItem?.stage_id ? stageById[laneItem.stage_id] : null
+      const candidateName = app.candidate?.name || laneItem?.candidate?.name || 'Sem nome'
+      const candidateEmail = app.candidate?.email || laneItem?.candidate?.email || ''
+
+      return {
+        applicationId: app.id,
+        candidateId: app.candidate_id,
+        name: candidateName,
+        email: candidateEmail,
+        stageId: laneItem?.stage_id ?? null,
+        stageName: stage?.name ?? null,
+        score: laneItem?.score ?? null,
+        appliedAt: app.created_at,
+        status: laneItem ? 'Ativo' : 'Não ativo',
+      }
+    })
+  }, [applications, laneItemByApplicationId, stageById])
+
+  const firstStageId = orderedStages[0]?.id ?? null
+  const totalCandidates = candidateRows.length
+  const newCandidatesCount = firstStageId ? (board?.lanes?.[firstStageId]?.length ?? 0) : 0
+  const advancedCandidatesCount = Math.max(totalCandidates - newCandidatesCount, 0)
+  const inactiveCandidatesCount = candidateRows.filter((row) => row.status === 'Não ativo').length
 
   useEffect(() => {
     ;(async () => {
@@ -147,6 +220,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         notify({ title: 'Vaga não encontrada', variant: 'error' })
         return
       }
+      setJobInfo(job.item)
 
       const { items } = await api<{ items: Stage[] }>(`/api/jobs/${id}/stages`)
       setStages(items)
@@ -253,6 +327,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   }, [applications])
 
   const loadAnalysisForStage = useCallback(async (stageId: string, candidateId: string | null) => {
+    clearStagePolling(stageId)
     if (!candidateId) {
       console.log(`[DEBUG] loadAnalysisForStage: candidato não selecionado para etapa ${stageId}`)
       setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
@@ -267,7 +342,11 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     console.log(`[DEBUG] Carregando análise para etapa ${stageId}, candidato ${candidateId}, applicationId ${applicationId}`)
     setAnalysisLoading((prev) => ({ ...prev, [stageId]: true }))
     try {
-      const res = await fetch(`/api/stages/${stageId}/analysis?application_id=${encodeURIComponent(applicationId)}`)
+      const res = await fetch(`/api/stages/${stageId}/analysis/latest?application_id=${encodeURIComponent(applicationId)}`)
+      if (res.status === 404) {
+        setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
+        return
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.error?.message || 'Erro ao buscar análise da IA')
@@ -275,14 +354,24 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       const json = await res.json()
       console.log(`[DEBUG] Análise carregada para etapa ${stageId}:`, json.item)
       setAnalysisByStage((prev) => ({ ...prev, [stageId]: json.item || null }))
+
+      if (json.item?.status === 'running') {
+        pollingTimeouts.current[stageId] = window.setTimeout(() => {
+          loadAnalysisForStage(stageId, candidateId)
+        }, 4000)
+      }
     } catch (error: any) {
       console.error('Erro ao carregar análise da etapa', error)
-      notify({ title: 'Erro ao carregar análise', description: error?.message || 'Não foi possível carregar o relatório da IA.', variant: 'error' })
+      notify({
+        title: 'Erro ao carregar análise',
+        description: error?.message || 'Não foi possível carregar o relatório da IA.',
+        variant: 'error',
+      })
       setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
     } finally {
       setAnalysisLoading((prev) => ({ ...prev, [stageId]: false }))
     }
-  }, [getApplicationId, notify])
+  }, [clearStagePolling, getApplicationId, notify])
 
   // Função para carregar automaticamente a análise mais recente de cada etapa
   const loadLatestAnalysisForStage = useCallback(async (stageId: string) => {
@@ -352,6 +441,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   }, [stages, applications, loadLatestAnalysisForStage])
 
   const handleStageCandidateSelection = useCallback((stageId: string, candidateId: string | null) => {
+    clearStagePolling(stageId)
     setStageSelectedCandidates((prev) => ({ ...prev, [stageId]: candidateId }))
     if (!candidateId) {
       setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
@@ -360,7 +450,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     }
     setAnalysisExpanded((prev) => ({ ...prev, [stageId]: prev[stageId] ?? true }))
     loadAnalysisForStage(stageId, candidateId)
-  }, [loadAnalysisForStage])
+  }, [clearStagePolling, loadAnalysisForStage])
 
   useEffect(() => {
     setSelectedCandidateIds((prev) => prev.filter((id) => !applications.some((app) => app.candidate_id === id)))
@@ -454,26 +544,85 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     }
   }
 
+  const removeApplication = useCallback(
+    async (applicationId: string) => {
+      if (!jobId) return
+      const confirmed = confirm('Remover candidato desta vaga?')
+      if (!confirmed) return
+      try {
+        const res = await fetch(`/api/applications/${applicationId}`, { method: 'DELETE' })
+        if (!res.ok) {
+          const text = await res.text()
+          let message = 'Não foi possível remover o candidato da vaga.'
+          try {
+            const json = text ? JSON.parse(text) : null
+            message = json?.error?.message || message
+          } catch {}
+          notify({ title: 'Erro ao remover candidato', description: message, variant: 'error' })
+          return
+        }
+        const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r) => r.json()).catch(() => ({ items: [] }))
+        setApplications(apps.items || [])
+        const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
+        if (b) {
+          setBoard(b as any)
+        }
+        notify({ title: 'Candidato removido', variant: 'success' })
+      } catch (error: any) {
+        notify({
+          title: 'Erro ao remover candidato',
+          description: error?.message || 'Falha inesperada ao remover o candidato da vaga.',
+          variant: 'error',
+        })
+      }
+    },
+    [jobId, notify],
+  )
+
+  const handleNavigateToStage = useCallback(
+    (stageId: string | null, candidateId: string) => {
+      setActiveMainTab('etapas')
+      if (stageId) {
+        setActiveTab(stageId)
+        setStageSelectedCandidates((prev) => ({ ...prev, [stageId]: candidateId }))
+        const url = new URL(window.location.href)
+        url.searchParams.set('stageId', stageId)
+        url.searchParams.set('candidateId', candidateId)
+        window.history.replaceState({}, '', url.toString())
+      }
+    },
+    [],
+  )
+
+  const formatDate = useCallback((value?: string | null) => {
+    if (!value) return '-'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '-'
+    return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
+  }, [])
+
   return (
     <div className="min-h-screen bg-[#f7f7f7] pb-12">
-      {/* Header */}
       <div className="bg-white border-b border-gray-200 shadow-sm -mx-4 md:-mx-8 px-4 md:px-8 mb-8">
         <div className="flex w-full flex-col gap-4 py-6 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-sm text-gray-500">Vagas / Processo seletivo</div>
-            <h1 className="mt-2 text-2xl font-semibold text-gray-900">Processo Seletivo</h1>
+            <div className="text-sm text-gray-500">Vagas / {jobInfo?.title || 'Processo seletivo'}</div>
+            <h1 className="mt-2 text-2xl font-semibold text-gray-900">{jobInfo?.title || 'Processo seletivo'}</h1>
             <p className="text-sm text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
           </div>
           {jobId && (
             <button
               className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-red-700 whitespace-nowrap"
-              onClick={async()=>{
-                if(!confirm('Excluir esta vaga e todas as etapas/candidaturas relacionadas?')) return
+              onClick={async () => {
+                if (!confirm('Excluir esta vaga e todas as etapas/candidaturas relacionadas?')) return
                 const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' })
-                if(!res.ok){
-                  const t = await res.text();
+                if (!res.ok) {
+                  const t = await res.text()
                   let msg = 'Falha ao excluir a vaga'
-                  try{ const j = t ? JSON.parse(t) : null; msg = j?.error?.message || msg }catch{}
+                  try {
+                    const j = t ? JSON.parse(t) : null
+                    msg = j?.error?.message || msg
+                  } catch {}
                   notify({ title: 'Erro', description: msg, variant: 'error' })
                   return
                 }
@@ -487,261 +636,406 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="space-y-8">
-        {/* Métricas */}
-        {board && (
-          <div className="grid gap-4 md:grid-cols-4">
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="text-sm text-gray-500">Total de Candidatos</div>
-              <div className="mt-2 text-3xl font-semibold text-gray-900">{applications.length}</div>
-              <div className="text-xs text-gray-400 mt-1">Atribuídos à vaga</div>
-            </div>
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="text-sm text-gray-500">Etapas</div>
-              <div className="mt-2 text-3xl font-semibold text-gray-900">{stages.length}</div>
-              <div className="text-xs text-gray-400 mt-1">No processo seletivo</div>
-            </div>
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="text-sm text-gray-500">Análises Concluídas</div>
-              <div className="mt-2 text-3xl font-semibold text-green-600">{Object.values(analysisByStage).filter(a => a?.status === 'succeeded').length}</div>
-              <div className="text-xs text-green-600 mt-1">Candidatos avaliados</div>
-            </div>
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="text-sm text-gray-500">Próximas Ações</div>
-              <div className="mt-2 text-3xl font-semibold text-gray-900">{stages.filter(s => !stagePromptMap[s.id]).length}</div>
-              <div className="text-xs text-yellow-600 mt-1">Sem prompt definido</div>
-            </div>
-          </div>
-        )}
+      <div className="space-y-8 px-4 md:px-8">
+        <div className="bg-white border border-gray-200 shadow-sm rounded-2xl p-1 inline-flex">
+          <button
+            type="button"
+            onClick={() => setActiveMainTab('candidatos')}
+            className={`px-5 py-2 text-sm font-semibold rounded-xl transition-colors ${
+              activeMainTab === 'candidatos'
+                ? 'bg-gray-900 text-white shadow'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            Candidatos
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMainTab('etapas')}
+            className={`px-5 py-2 text-sm font-semibold rounded-xl transition-colors ${
+              activeMainTab === 'etapas'
+                ? 'bg-gray-900 text-white shadow'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            Etapas & IA
+          </button>
+        </div>
 
-        {/* Candidatos */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">Gerenciamento de Candidatos</h2>
-              <p className="text-sm text-gray-600">Atribua candidatos à vaga e visualize o progresso</p>
-            </div>
-          </div>
-          
-          <div className="space-y-6">
-            {/* Atribuir Candidato */}
-            <div className="border-b border-gray-200 pb-6">
-              <label className="block text-sm font-medium text-gray-900 mb-3">Atribuir candidato à vaga</label>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                <div className="flex-1">
-                  <select
-                    multiple
-                    className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20 min-h-[160px]"
-                    value={selectedCandidateIds}
-                    onChange={(e) =>
-                      setSelectedCandidateIds(Array.from(e.target.selectedOptions).map((option) => option.value))
-                    }
-                  >
-                    {candidates
-                      .filter((c) => !applications.some((app) => app.candidate_id === c.id))
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} {c.email ? `(${c.email})` : ''}
-                        </option>
-                      ))}
-                  </select>
-                  <p className="mt-2 text-xs text-gray-500">
-                    Use Ctrl/⌘ para selecionar vários candidatos e clique em “Atribuir à vaga”.
-                  </p>
+        {activeMainTab === 'candidatos' && (
+          <div className="space-y-8">
+            <div className="rounded-3xl border border-gray-200 bg-white shadow-sm p-6 md:p-8">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-gray-500">Pipeline</div>
+                  <h2 className="mt-2 text-2xl font-semibold text-gray-900">Gerenciar Candidatos</h2>
+                  <p className="text-sm text-gray-600">Acompanhe todos os candidatos desta vaga em um único painel.</p>
                 </div>
-                <button 
-                  onClick={assignCandidate} 
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled
+                    title="Função disponível em breve"
+                    className="rounded-lg bg-gray-900/70 px-4 py-2 text-sm font-semibold text-white opacity-60 cursor-not-allowed"
+                  >
+                    Exportar
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    title="Função disponível em breve"
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 opacity-60 cursor-not-allowed"
+                  >
+                    Filtros
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-gray-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Total</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-gray-900">{totalCandidates}</span>
+                    <span className="text-xs text-gray-500 uppercase tracking-wide">candidatos</span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-indigo-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Novos</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-indigo-600">{newCandidatesCount}</span>
+                    <span className="text-xs text-indigo-600 uppercase tracking-wide">na etapa inicial</span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Em processo</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-emerald-600">{advancedCandidatesCount}</span>
+                    <span className="text-xs text-emerald-600 uppercase tracking-wide">etapas avançadas</span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Inativos</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-amber-600">{inactiveCandidatesCount}</span>
+                    <span className="text-xs text-amber-600 uppercase tracking-wide">candidatos inativos</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between border-b border-gray-200 pb-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Atribuir candidatos à vaga</h3>
+                  <p className="text-sm text-gray-600">Selecione candidatos cadastrados para iniciar o processo seletivo.</p>
+                </div>
+                <button
+                  onClick={assignCandidate}
                   disabled={selectedCandidateIds.length === 0}
                   className="rounded-lg bg-green-600 px-6 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                 >
                   Atribuir à vaga
                 </button>
               </div>
+              <div className="mt-6">
+                <label className="block text-sm font-medium text-gray-900 mb-3">Selecione os candidatos</label>
+                <select
+                  multiple
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20 min-h-[160px]"
+                  value={selectedCandidateIds}
+                  onChange={(e) => setSelectedCandidateIds(Array.from(e.target.selectedOptions).map((option) => option.value))}
+                >
+                  {candidates
+                    .filter((c) => !applications.some((app) => app.candidate_id === c.id))
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.email ? `(${c.email})` : ''}
+                      </option>
+                    ))}
+                </select>
+                <p className="mt-2 text-xs text-gray-500">Use Ctrl/⌘ para selecionar vários candidatos simultaneamente.</p>
+              </div>
             </div>
 
-            {/* Candidatos Atribuídos */}
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-gray-900">Candidatos Atribuídos ({applications.length})</h3>
-              </div>
-              {applications.length > 0 ? (
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {applications.map((a) => {
-                    const c = candidates.find((x) => x.id === a.candidate_id)
-                    return (
-                      <div key={a.id} className="border border-gray-200 rounded-xl p-4 bg-white hover:shadow-md transition-shadow">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0 flex-1">
-                            <div className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold text-sm flex-shrink-0">
-                              {(c?.name || a.candidate_id).slice(0,2).toUpperCase()}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="font-medium text-gray-900 truncate">{c?.name || a.candidate_id}</div>
-                              {c?.email && <div className="text-xs text-gray-600 truncate">{c.email}</div>}
-                            </div>
-                          </div>
-                          <button 
-                            className="text-red-600 hover:text-red-700 text-xs bg-red-50 hover:bg-red-100 rounded px-2 py-1 flex-shrink-0 whitespace-nowrap"
-                            onClick={async()=>{ 
-                              if(!confirm('Remover candidato desta vaga?')) return; 
-                              await fetch(`/api/applications/${a.id}`, { method: 'DELETE' }); 
-                              const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r)=>r.json()); 
-                              setApplications(apps.items || []) 
-                            }}
-                            title="Remover candidato"
-                          >
-                            ✕ Remover
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  })}
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Lista de Candidatos</h3>
+                  <p className="text-sm text-gray-600">Visualize o status de cada candidato e navegue para a etapa correspondente.</p>
                 </div>
-              ) : (
+                <span className="text-sm font-medium text-gray-500">Total: {totalCandidates}</span>
+              </div>
+
+              {candidateRows.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
                   <p className="text-sm text-gray-600">Nenhum candidato atribuído à vaga ainda.</p>
-                  <p className="text-xs text-gray-500 mt-1">Selecione um candidato acima para começar.</p>
+                  <p className="text-xs text-gray-500 mt-1">Atribua candidatos acima para acompanhar o pipeline.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200 text-sm">
+                    <thead className="bg-gray-50">
+                      <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        <th className="px-4 py-3">Candidato</th>
+                        <th className="px-4 py-3">Etapa</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Score IA</th>
+                        <th className="px-4 py-3">Aplicado em</th>
+                        <th className="px-4 py-3 text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {candidateRows.map((row) => {
+                        const initials =
+                          row.name && row.name.trim().length > 0
+                            ? row.name
+                                .split(' ')
+                                .map((part) => part.charAt(0))
+                                .join('')
+                                .slice(0, 2)
+                                .toUpperCase()
+                            : row.candidateId.slice(0, 2).toUpperCase()
+                        const badgeClasses =
+                          row.status === 'Ativo'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-red-100 text-red-700'
+                        const score =
+                          typeof row.score === 'number'
+                            ? `${row.score.toFixed(1)} pts`
+                            : 'Sem pontuação'
+                        return (
+                          <tr key={row.applicationId} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="h-10 w-10 flex items-center justify-center rounded-full bg-gray-900/5 text-sm font-semibold text-gray-700">
+                                  {initials}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="font-medium text-gray-900 truncate">{row.name}</div>
+                                  {row.email && <div className="text-xs text-gray-500 truncate">{row.email}</div>}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4">
+                              <span className="text-sm font-medium text-gray-700">{row.stageName ?? 'Sem etapa'}</span>
+                            </td>
+                            <td className="px-4 py-4">
+                              <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses}`}>
+                                {row.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4">
+                              <span className="font-medium text-gray-900">{score}</span>
+                              {row.stageName && (
+                                <div className="text-xs text-gray-500">Etapa atual</div>
+                              )}
+                            </td>
+                            <td className="px-4 py-4 text-gray-600">{formatDate(row.appliedAt)}</td>
+                            <td className="px-4 py-4 text-right">
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleNavigateToStage(row.stageId ?? orderedStages[0]?.id ?? null, row.candidateId)}
+                                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
+                                >
+                                  Ver etapa
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeApplication(row.applicationId)}
+                                  className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors"
+                                >
+                                  Remover
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
-          </div>
-        </div>
 
-        {/* Etapas */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900">Etapas do Processo</h2>
-            <p className="text-sm text-gray-600">Gerencie as etapas e analise candidatos</p>
-          </div>
-
-          {stages.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
-              <p className="text-sm text-gray-600">Nenhuma etapa cadastrada.</p>
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Painel de Candidatos (MVP)</h3>
+              <Panel jobId={jobId} />
             </div>
-          ) : (
-            <div className="space-y-4">
-              <JobStageHeader
-                stages={stages}
-                lanes={board?.lanes || {}}
-                activeStageId={activeTab}
-                onChange={(id)=>{
-                  setActiveTab(id)
-                  const url = new URL(window.location.href)
-                  url.searchParams.set('stageId', id)
-                  window.history.replaceState({}, '', url.toString())
-                }}
-              />
-              
-              {activeTab && (
-                <div className="space-y-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center gap-3 flex-1">
-                      <div className="text-sm flex-1">
-                        <div className="text-xs uppercase tracking-wide text-gray-500">Etapa Ativa</div>
-                        <div className="font-semibold text-gray-900 mt-1">{stages.find(s=>s.id===activeTab)?.name}</div>
-                        {stages.find(s=>s.id===activeTab)?.description && (
-                          <p className="text-xs text-gray-600 mt-2 whitespace-pre-wrap">{stages.find(s=>s.id===activeTab)?.description}</p>
-                        )}
-                      </div>
-                    </div>
-                    <BulkActions
-                      jobId={jobId!}
-                      stages={stages}
-                      activeStageId={activeTab}
-                      selectedIds={Object.entries(selectedForBulk).filter(([_,v])=>v).map(([k])=>k)}
-                      onMoved={async()=>{
-                        const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(()=>null)
-                        if(b){ setBoard(b as any); setSelectedForBulk({}) }
-                      }}
-                    />
-                  </div>
+          </div>
+        )}
 
-                  <CandidatesFilters value={filters} onChange={setFilters} />
-                  
-                  <div>
-                    <CandidatesTable
-                      stage={stages.find(s=>s.id===activeTab)!}
-                      items={(board?.lanes?.[activeTab] || []) as any}
-                      selectedMap={selectedForBulk}
-                      setSelectedMap={setSelectedForBulk}
-                      onSelect={(it)=>{
-                        setCurrentItem({ application_id: it.application_id, application_stage_id: it.application_stage_id, candidate: { id: it.candidate.id, name: it.candidate.name }})
-                        const url = new URL(window.location.href)
-                        url.searchParams.set('candidateId', it.candidate.id)
-                        window.history.replaceState({}, '', url.toString())
-                      }}
-                    />
-                  </div>
+        {activeMainTab === 'etapas' && (
+          <div className="space-y-8">
+            {board && (
+              <div className="grid gap-4 md:grid-cols-4">
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Total de Candidatos</div>
+                  <div className="mt-2 text-3xl font-semibold text-gray-900">{applications.length}</div>
+                  <div className="text-xs text-gray-400 mt-1">Atribuídos à vaga</div>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Painel de candidatos */}
-        <section>
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Painel de Candidatos (MVP)</h2>
-          <Panel jobId={jobId} />
-        </section>
-
-        {/* Análises de Candidatos - SEMPRE VISÍVEIS */}
-        <section>
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Análises de Candidatos</h2>
-          <div className="space-y-6">
-            {stages.map((s) => (
-              <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                {/* Header da etapa */}
-                <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
-                      <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
-                        <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
-                          Threshold: {s.threshold}
-                        </span>
-                        <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
-                          Peso: {s.stage_weight}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Etapas</div>
+                  <div className="mt-2 text-3xl font-semibold text-gray-900">{stages.length}</div>
+                  <div className="text-xs text-gray-400 mt-1">No processo seletivo</div>
                 </div>
-
-                {/* Análise sempre visível - expandida */}
-                <div className="p-6">
-                  {(() => {
-                    const candidateName = stageSelectedCandidates[s.id] ? (candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null) : null
-                    const analysis = analysisByStage[s.id] || null
-                    const loading = Boolean(analysisLoading[s.id])
-                    
-                    console.log(`[DEBUG] Renderizando análise para etapa ${s.id}:`, {
-                      candidateName,
-                      analysis,
-                      loading,
-                      analysisResult: analysis?.result
-                    })
-                    
-                    return (
-                      <StageAnalysisPanel
-                        candidateName={candidateName}
-                        analysis={analysis}
-                        loading={loading}
-                        expanded={true} // Sempre expandido
-                        onToggle={() => {}} // Não permite colapsar
-                        onRefresh={() => {
-                          const candidateId = stageSelectedCandidates[s.id] ?? null
-                          if (candidateId) loadAnalysisForStage(s.id, candidateId)
-                        }}
-                      />
-                    )
-                  })()}
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Análises Concluídas</div>
+                  <div className="mt-2 text-3xl font-semibold text-green-600">
+                    {Object.values(analysisByStage).filter((a) => a?.status === 'succeeded').length}
+                  </div>
+                  <div className="text-xs text-green-600 mt-1">Candidatos avaliados</div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Próximas Ações</div>
+                  <div className="mt-2 text-3xl font-semibold text-gray-900">
+                    {stages.filter((s) => !stagePromptMap[s.id]).length}
+                  </div>
+                  <div className="text-xs text-yellow-600 mt-1">Sem prompt definido</div>
                 </div>
               </div>
-            ))}
-          </div>
-        </section>
+            )}
 
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="mb-6">
+                <h2 className="text-lg font-semibold text-gray-900">Etapas do Processo</h2>
+                <p className="text-sm text-gray-600">Gerencie as etapas e acompanhe o pipeline de candidatos.</p>
+              </div>
+
+              {stages.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
+                  <p className="text-sm text-gray-600">Nenhuma etapa cadastrada.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <JobStageHeader
+                    stages={stages}
+                    lanes={board?.lanes || {}}
+                    activeStageId={activeTab}
+                    onChange={(id) => {
+                      setActiveTab(id)
+                      const url = new URL(window.location.href)
+                      url.searchParams.set('stageId', id)
+                      window.history.replaceState({}, '', url.toString())
+                    }}
+                  />
+
+                  {activeTab && (
+                    <div className="space-y-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-gray-50 rounded-lg">
+                        <div className="flex items-center gap-3 flex-1">
+                          <div className="text-sm flex-1">
+                            <div className="text-xs uppercase tracking-wide text-gray-500">Etapa ativa</div>
+                            <div className="font-semibold text-gray-900 mt-1">
+                              {stages.find((s) => s.id === activeTab)?.name}
+                            </div>
+                            {stages.find((s) => s.id === activeTab)?.description && (
+                              <p className="text-xs text-gray-600 mt-2 whitespace-pre-wrap">
+                                {stages.find((s) => s.id === activeTab)?.description}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <BulkActions
+                          jobId={jobId!}
+                          stages={stages}
+                          activeStageId={activeTab}
+                          selectedIds={Object.entries(selectedForBulk)
+                            .filter(([_, v]) => v)
+                            .map(([k]) => k)}
+                          onMoved={async () => {
+                            const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
+                            if (b) {
+                              setBoard(b as any)
+                              setSelectedForBulk({})
+                            }
+                          }}
+                        />
+                      </div>
+
+                      <CandidatesFilters value={filters} onChange={setFilters} />
+
+                      <div>
+                        <CandidatesTable
+                          stage={stages.find((s) => s.id === activeTab)!}
+                          items={(board?.lanes?.[activeTab] || []) as any}
+                          selectedMap={selectedForBulk}
+                          setSelectedMap={setSelectedForBulk}
+                          onSelect={(it) => {
+                            setCurrentItem({
+                              application_id: it.application_id,
+                              application_stage_id: it.application_stage_id,
+                              candidate: { id: it.candidate.id, name: it.candidate.name },
+                            })
+                            const url = new URL(window.location.href)
+                            url.searchParams.set('candidateId', it.candidate.id)
+                            window.history.replaceState({}, '', url.toString())
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900 mb-6">Análises de Candidatos</h2>
+              <div className="space-y-6">
+                {stages.map((s) => (
+                  <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
+                          <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 mt-1">
+                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                              Threshold: {s.threshold}
+                            </span>
+                            <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
+                              Peso: {s.stage_weight}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-6">
+                      {(() => {
+                        const candidateName = stageSelectedCandidates[s.id]
+                          ? candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null
+                          : null
+                        const analysis = analysisByStage[s.id] || null
+                        const loading = Boolean(analysisLoading[s.id])
+
+                        console.log(`[DEBUG] Renderizando análise para etapa ${s.id}:`, {
+                          candidateName,
+                          analysis,
+                          loading,
+                          analysisResult: analysis?.result,
+                        })
+
+                        return (
+                          <StageAnalysisPanel
+                            candidateName={candidateName}
+                            analysis={analysis}
+                            loading={loading}
+                            expanded={true}
+                            onToggle={() => {}}
+                            onRefresh={() => {
+                              const candidateId = stageSelectedCandidates[s.id] ?? null
+                              if (candidateId) loadAnalysisForStage(s.id, candidateId)
+                            }}
+                          />
+                        )
+                      })()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
