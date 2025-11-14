@@ -705,22 +705,61 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                 </button>
               </div>
               <div className="mt-6">
-                <label className="block text-sm font-medium text-gray-900 mb-3">Selecione os candidatos</label>
-                <select
-                  multiple
-                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20 min-h-[160px]"
-                  value={selectedCandidateIds}
-                  onChange={(e) => setSelectedCandidateIds(Array.from(e.target.selectedOptions).map((option) => option.value))}
-                >
-                  {candidates
-                    .filter((c) => !applications.some((app) => app.candidate_id === c.id))
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} {c.email ? `(${c.email})` : ''}
-                      </option>
-                    ))}
-                </select>
-                <p className="mt-2 text-xs text-gray-500">Use Ctrl/⌘ para selecionar vários candidatos simultaneamente.</p>
+                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <label htmlFor="job-candidate-search" className="block text-sm font-medium text-gray-900">
+                    Selecione os candidatos
+                  </label>
+                  <span className="text-xs font-medium text-gray-500">
+                    {filteredCandidates.length}{' '}
+                    {filteredCandidates.length === 1 ? 'candidato disponível' : 'candidatos disponíveis'}
+                  </span>
+                </div>
+                <div className="mt-3">
+                  <input
+                    id="job-candidate-search"
+                    type="search"
+                    placeholder="Buscar por nome, e-mail ou ID do candidato"
+                    value={candidateSearch}
+                    onChange={(e) => setCandidateSearch(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
+                  />
+                </div>
+                <div className="mt-4 rounded-lg border border-gray-200">
+                  {filteredCandidates.length === 0 ? (
+                    <div className="p-4 text-sm text-gray-500">
+                      Nenhum candidato encontrado. Ajuste a busca ou cadastre novos candidatos.
+                    </div>
+                  ) : (
+                    <ul className="max-h-64 overflow-y-auto divide-y divide-gray-200">
+                      {filteredCandidates.map((candidate) => {
+                        const isSelected = selectedCandidateIds.includes(candidate.id)
+                        return (
+                          <li key={candidate.id}>
+                            <label className="flex cursor-pointer items-start gap-3 p-3 hover:bg-gray-50">
+                              <input
+                                type="checkbox"
+                                className="mt-1 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                                checked={isSelected}
+                                onChange={() => toggleCandidateSelection(candidate.id)}
+                              />
+                              <div className="min-w-0">
+                                <div className="font-medium text-gray-900 truncate">
+                                  {candidate.name || 'Candidato sem nome'}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {candidate.email || `ID: ${candidate.id}`}
+                                </div>
+                              </div>
+                            </label>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Marque as caixas para atribuir um ou mais candidatos à vaga.
+                </p>
               </div>
             </div>
 
