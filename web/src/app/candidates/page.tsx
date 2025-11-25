@@ -24,6 +24,13 @@ type Candidate = {
   latest_stage_name?: string | null;
   resume_path?: string | null;
   resume_bucket?: string | null;
+  city?: string | null;
+  state?: string | null;
+  address?: string | null;
+  children?: number | null;
+  gender?: string | null;
+  languages?: string[] | null;
+  education?: string | null;
 }
 
 function parseCsv(text: string) {
@@ -100,6 +107,7 @@ export default function CandidatesPage() {
   const [total, setTotal] = useState(0)
   const pageSize = 20
   const [selected, setSelected] = useState<Candidate | null>(null)
+  const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null)
   const [availableJobs, setAvailableJobs] = useState<{id: string; title: string}[]>([])
   const [availableStages, setAvailableStages] = useState<{id: string; name: string}[]>([])
   const [isCreateCandidateModalOpen, setIsCreateCandidateModalOpen] = useState(false)
@@ -195,29 +203,60 @@ export default function CandidatesPage() {
     }
   }
 
+  function openEditModal(candidate: Candidate) {
+    setEditingCandidate(candidate)
+    setForm({
+      name: candidate.name,
+      email: candidate.email || '',
+      phone: candidate.phone || '',
+      job_id: '', // Não editável no modal de edição
+      stage_id: '', // Não editável no modal de edição
+      city: candidate.city || '',
+      state: candidate.state || '',
+      address: candidate.address || '',
+      children: candidate.children ? String(candidate.children) : '',
+      gender: candidate.gender || '',
+      languages: candidate.languages || [],
+      education: candidate.education || '',
+      resumeFile: null
+    })
+    setIsCreateCandidateModalOpen(true)
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     try {
-      if (!form.name || !form.email || !form.phone || !form.job_id || !form.stage_id) {
-        notify({ title: 'Campos obrigatórios', description: 'Preencha todos os campos obrigatórios (Nome, E-mail, Telefone, Vaga e Etapa)', variant: 'error' })
+      // Validação básica
+      if (!form.name || !form.email || !form.phone) {
+        notify({ title: 'Campos obrigatórios', description: 'Preencha Nome, E-mail e Telefone', variant: 'error' })
         setLoading(false)
         return
       }
-      
-      if (!form.resumeFile) {
-        notify({ title: 'CV obrigatório', description: 'É necessário anexar um currículo', variant: 'error' })
-        setLoading(false)
-        return
+
+      if (!editingCandidate) {
+        if (!form.job_id || !form.stage_id) {
+          notify({ title: 'Campos obrigatórios', description: 'Selecione a Vaga e a Etapa', variant: 'error' })
+          setLoading(false)
+          return
+        }
+        if (!form.resumeFile) {
+          notify({ title: 'CV obrigatório', description: 'É necessário anexar um currículo', variant: 'error' })
+          setLoading(false)
+          return
+        }
       }
       
-      const resumeData = await uploadResume(form.resumeFile)
-      if (!resumeData) {
-        setLoading(false)
-        return
+      let resumeData = null
+      if (form.resumeFile) {
+        resumeData = await uploadResume(form.resumeFile)
+        if (!resumeData) {
+          setLoading(false)
+          return
+        }
       }
       
-      const payload = {
+      const payload: any = {
         name: form.name,
         email: form.email,
         phone: form.phone,
@@ -228,35 +267,61 @@ export default function CandidatesPage() {
         gender: form.gender || null,
         languages: form.languages,
         education: form.education || null,
-        resume_path: resumeData.path,
-        resume_bucket: resumeData.bucket,
-        job_id: form.job_id,
-        stage_id: form.stage_id,
       }
-      
-      const res = await fetch('/api/candidates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify(payload),
-      })
+
+      if (resumeData) {
+        payload.resume_path = resumeData.path
+        payload.resume_bucket = resumeData.bucket
+      }
+
+      let res
+      if (editingCandidate) {
+        // Update (PATCH)
+        res = await fetch(`/api/candidates/${editingCandidate.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(payload),
+        })
+      } else {
+        // Create (POST)
+        payload.job_id = form.job_id
+        payload.stage_id = form.stage_id
+        // Se estiver criando e não tiver resumeData (já validado acima), vai dar erro no backend.
+        // Mas já garantimos resumeData se !editingCandidate
+        if (!resumeData) {
+             // Should not happen due to validation above
+             setLoading(false)
+             return
+        }
+        // Ensure resume fields are set for creation
+        payload.resume_path = resumeData.path
+        payload.resume_bucket = resumeData.bucket
+
+        res = await fetch('/api/candidates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(payload),
+        })
+      }
       
       if (!res.ok) {
         const text = await res.text()
-        let message = res.statusText || 'Erro ao criar candidato'
+        let message = res.statusText || 'Erro ao salvar candidato'
         try {
           const payload = text ? JSON.parse(text) : null
           message = payload?.error?.message || message
         } catch {}
-        notify({ title: 'Erro ao criar candidato', description: message, variant: 'error' })
+        notify({ title: 'Erro ao salvar', description: message, variant: 'error' })
         return
       }
       
-      const candidateId = (await res.json()).id
       setForm({ name: '', email: '', phone: '', job_id: '', stage_id: '', city: '', state: '', address: '', children: '', gender: '', languages: [], education: '', resumeFile: null })
       setLanguageInput('')
+      setEditingCandidate(null)
       await load()
-      notify({ title: 'Candidato criado e atribuído', variant: 'success' })
+      notify({ title: editingCandidate ? 'Candidato atualizado!' : 'Candidato criado e atribuído', variant: 'success' })
       setIsCreateCandidateModalOpen(false)
     } finally {
       setLoading(false)
@@ -439,7 +504,14 @@ export default function CandidatesPage() {
             <button className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
               Exportar
             </button>
-            <button onClick={() => setIsCreateCandidateModalOpen(true)} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700">
+            <button 
+              onClick={() => {
+                setEditingCandidate(null)
+                setForm({ name: '', email: '', phone: '', job_id: '', stage_id: '', city: '', state: '', address: '', children: '', gender: '', languages: [], education: '', resumeFile: null })
+                setIsCreateCandidateModalOpen(true)
+              }} 
+              className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700"
+            >
               + Criar Candidato
             </button>
           </div>
@@ -561,28 +633,40 @@ export default function CandidatesPage() {
                         </div>
                       </td>
                       <td className="py-4 px-5 text-right">
-                        <button 
-                          onClick={()=>setSelected(c)}
-                          className="text-gray-400 hover:text-gray-600 transition-colors"
-                          title="Visualizar"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-                            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
-                            <circle cx="12" cy="12" r="3" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => { setSelected(c); setIsDeleteCandidateModalOpen(true) }}
-                          className="ml-2 text-red-400 hover:text-red-600 transition-colors"
-                          title="Deletar"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-                            <polyline points="3 6 5 6 21 6"></polyline>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                            <line x1="10" y1="11" x2="10" y2="17"></line>
-                            <line x1="14" y1="11" x2="14" y2="17"></line>
-                          </svg>
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button 
+                            onClick={()=>setSelected(c)}
+                            className="text-gray-400 hover:text-gray-600 transition-colors"
+                            title="Visualizar"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+                              <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                              <circle cx="12" cy="12" r="3" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => openEditModal(c)}
+                            className="text-blue-400 hover:text-blue-600 transition-colors"
+                            title="Editar"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => { setSelected(c); setIsDeleteCandidateModalOpen(true) }}
+                            className="text-red-400 hover:text-red-600 transition-colors"
+                            title="Deletar"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                              <line x1="10" y1="11" x2="10" y2="17"></line>
+                              <line x1="14" y1="11" x2="14" y2="17"></line>
+                            </svg>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -870,14 +954,18 @@ export default function CandidatesPage() {
         </div>
       )}
     
-      {/* Modal de Criar Candidato */}
+      {/* Modal de Criar/Editar Candidato */}
       {isCreateCandidateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="relative w-full max-w-4xl rounded-2xl bg-white shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 sticky top-0 bg-white">
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 sticky top-0 bg-white z-10">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">Cadastrar Novo Candidato</h2>
-                <p className="text-sm text-gray-500">Preencha os dados do candidato para adicionar à plataforma</p>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {editingCandidate ? 'Editar Candidato' : 'Cadastrar Novo Candidato'}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {editingCandidate ? 'Atualize os dados do candidato' : 'Preencha os dados do candidato para adicionar à plataforma'}
+                </p>
               </div>
               <button onClick={() => setIsCreateCandidateModalOpen(false)} className="text-gray-500 hover:text-gray-800" aria-label="Fechar">
                 ✕
@@ -902,26 +990,30 @@ export default function CandidatesPage() {
                     <input value={form.phone} onChange={(e)=>setForm((f)=>({ ...f, phone: e.target.value }))} placeholder="(00) 00000-0000" className="border rounded px-3 py-2 w-full" required />
                   </div>
                 </div>
-                <div className="grid md:grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Vaga *</label>
-                    <select value={form.job_id} onChange={(e)=>setForm((f)=>({ ...f, job_id: e.target.value, stage_id: '' }))} className="w-full border rounded px-3 py-2" required>
-                      <option value="">Selecione a vaga</option>
-                      {availableJobs.map((j)=> <option key={j.id} value={j.id}>{j.title}</option>)}
-                    </select>
-                  </div>
-                  {form.job_id && (
+                {!editingCandidate && (
+                  <div className="grid md:grid-cols-2 gap-4 mt-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Etapa *</label>
-                      <select value={form.stage_id} onChange={(e)=>setForm((f)=>({ ...f, stage_id: e.target.value }))} className="w-full border rounded px-3 py-2" required>
-                        <option value="">Selecione a etapa</option>
-                        {availableStages.map((s)=> <option key={s.id} value={s.id}>{s.name}</option>)}
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Vaga *</label>
+                      <select value={form.job_id} onChange={(e)=>setForm((f)=>({ ...f, job_id: e.target.value, stage_id: '' }))} className="w-full border rounded px-3 py-2" required>
+                        <option value="">Selecione a vaga</option>
+                        {availableJobs.map((j)=> <option key={j.id} value={j.id}>{j.title}</option>)}
                       </select>
                     </div>
-                  )}
-                </div>
+                    {form.job_id && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Etapa *</label>
+                        <select value={form.stage_id} onChange={(e)=>setForm((f)=>({ ...f, stage_id: e.target.value }))} className="w-full border rounded px-3 py-2" required>
+                          <option value="">Selecione a etapa</option>
+                          {availableStages.map((s)=> <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">CV (Anexo) *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    {editingCandidate ? 'CV (Atualizar - Opcional)' : 'CV (Anexo) *'}
+                  </label>
                   <input 
                     type="file" 
                     accept=".pdf,.doc,.docx"
@@ -938,7 +1030,7 @@ export default function CandidatesPage() {
                       setForm((f)=>({ ...f, resumeFile: file }))
                     }} 
                     className="border rounded px-3 py-2 w-full" 
-                    required 
+                    required={!editingCandidate}
                   />
                   {form.resumeFile && (
                     <p className="text-sm text-gray-600 mt-1">
@@ -1017,7 +1109,7 @@ export default function CandidatesPage() {
                   Cancelar
                 </button>
                 <button disabled={loading || uploadingResume} className="rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60">
-                  {loading || uploadingResume ? 'Salvando...' : 'Cadastrar Candidato'}
+                  {loading || uploadingResume ? 'Salvando...' : (editingCandidate ? 'Salvar Alterações' : 'Cadastrar Candidato')}
                 </button>
               </div>
             </form>
@@ -1027,5 +1119,3 @@ export default function CandidatesPage() {
     </div>
   )
 }
-
-

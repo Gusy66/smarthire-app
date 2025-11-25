@@ -10,6 +10,7 @@ import base64
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
+from resume_analysis_utils import prepare_structured_analysis
 
 # Configuração básica
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -261,43 +262,30 @@ async def get_stage_details(stage_id: str, user_id: str) -> Optional[StagePayloa
 
     return None
 
-async def analyze_candidate_simulated(text_content: str, stage_description: str, requirements: list[dict]) -> EvaluationResult:
+async def analyze_candidate_simulated(
+    text_content: str,
+    stage_description: str,
+    requirements: list[dict],
+) -> EvaluationResult:
     """
-    Análise simulada quando não há chave da API
+    Análise simulada padronizada quando não há chave da API.
     """
     print("[IA] ========== ANÁLISE SIMULADA ==========")
 
-    # Análise simulada baseada no conteúdo
-    if len(text_content.strip()) < 100:
-        return EvaluationResult(
-            score=2.0,
-            analysis="Currículo muito curto ou vazio. Difícil avaliar competências.",
-            strengths=["Informações básicas presentes"],
-            weaknesses=["Falta de detalhes sobre experiências", "Currículo muito resumido"],
-            matched_requirements=["Apresenta informações básicas"],
-            missing_requirements=["Experiência detalhada", "Competências específicas"]
-        )
+    structured = prepare_structured_analysis(
+        text_content=text_content,
+        stage_description=stage_description,
+        requirements=requirements,
+    )
 
     return EvaluationResult(
-        score=7.5,
-        analysis="Candidato apresenta boa experiência geral, mas faltam alguns requisitos específicos da vaga.",
-        strengths=[
-            "Experiência sólida em tecnologia da informação",
-            "Habilidades técnicas relevantes",
-            "Formação acadêmica adequada"
-        ],
-        weaknesses=[
-            "Falta de experiência específica na área requerida",
-            "Pouca experiência em liderança de equipes"
-        ],
-        matched_requirements=[
-            "Possui formação na área",
-            "Experiência em desenvolvimento de software"
-        ],
-        missing_requirements=[
-            "Experiência específica em tecnologias requeridas",
-            "Experiência em gestão de projetos"
-        ]
+        score=structured["score"],
+        analysis=structured["analysis"],
+        matched_requirements=structured["matched_requirements"],
+        missing_requirements=structured["missing_requirements"],
+        strengths=structured["strengths"],
+        weaknesses=structured["weaknesses"],
+        recommendations=structured["weaknesses"],
     )
 
 async def analyze_candidate_with_openai(
@@ -345,7 +333,7 @@ async def analyze_candidate_with_openai(
             ])
 
             base_prompt = prompt_template or """
-Analise o candidato para a vaga baseado nas informações fornecidas.
+Leia com atenção a DESCRIÇÃO DA ETAPA definida pelo RH e avalie o currículo do candidato somente com base no texto real fornecido.
 
 DESCRIÇÃO DA ETAPA:
 {{STAGE_DESCRIPTION}}
@@ -353,66 +341,34 @@ DESCRIÇÃO DA ETAPA:
 REQUISITOS DA ETAPA:
 {{REQUIREMENTS_LIST}}
 
-INFORMAÇÕES DO CANDIDATO:
+CURRÍCULO (texto bruto do candidato):
 {{CANDIDATE_INFO}}
 
-INSTRUÇÕES CRÍTICAS:
-1. USE APENAS as informações reais do candidato fornecidas acima
-2. NÃO invente dados fictícios como "João Silva" ou empresas genéricas
-3. Se o currículo estiver vazio ou incompleto, mencione isso na análise
-4. Baseie-se EXCLUSIVAMENTE no conteúdo real do currículo do candidato
+OBJETIVO:
+1. Verificar aderência do currículo à etapa descrita.
+2. Emitir uma pontuação de aderência entre 0 e 10.
+3. Produzir EXATAMENTE:
+   • 4 pontos fortes identificados no currículo.
+   • 3 oportunidades de melhoria.
+   • 3 requisitos importantes que o candidato atende.
+   • A lista completa dos requisitos pendentes (não atendidos).
 
-Forneça uma análise detalhada em JSON válido com a seguinte estrutura:
-
+FORMATO DE RESPOSTA (JSON ÚNICO):
 {
-  "score": pontuação de 0 a 10 (float),
-  "analysis": resumo textual detalhado da análise do candidato REAL,
-  "strengths": array de strings com pontos fortes específicos baseados no currículo REAL,
-  "weaknesses": array de strings com pontos de melhoria específicos baseados no currículo REAL,
-  "matched_requirements": array de strings com requisitos atendidos pelo candidato REAL,
-  "missing_requirements": array de strings com requisitos não atendidos pelo candidato REAL
+  "score": number,
+  "analysis": string explicando brevemente como a descrição foi interpretada,
+  "strengths": [4 strings com evidências reais; use "Informação não encontrada no currículo." quando faltar dado],
+  "weaknesses": [3 strings com oportunidades de melhoria baseadas no currículo],
+  "matched_requirements": [3 strings descrevendo requisitos atendidos; quando não houver evidência, diga explicitamente que não foi possível confirmar],
+  "missing_requirements": [strings listando cada requisito não atendido]
 }
 
-IMPORTANTE:
-- Use APENAS dados reais do candidato fornecido
-- Se não houver informações suficientes, mencione isso na justificativa
-- Seja específico e baseie-se na descrição da etapa e nas informações REAIS do candidato
-
-INSTRUÇÕES DETALHADAS:
-
-1. ANÁLISE ESPECÍFICA DO CURRÍCULO:
-   - Leia cuidadosamente o currículo do candidato
-   - Identifique experiências, habilidades e competências mencionadas
-   - Compare com os requisitos da etapa
-   - Seja específico sobre o que foi encontrado ou não encontrado
-
-2. MATCHED_REQUIREMENTS (Requisitos Atendidos):
-   - Liste especificamente quais requisitos foram atendidos
-   - Exemplo: "Demonstra experiência sólida em React com projetos em produção"
-   - Exemplo: "Possui conhecimento avançado em Python com frameworks Django"
-   - Exemplo: "Experiência comprovada em liderança de equipes de desenvolvimento"
-   - NÃO use textos genéricos como "experiência relevante"
-
-3. MISSING_REQUIREMENTS (Requisitos Não Atendidos):
-   - Liste especificamente quais requisitos não foram atendidos
-   - Exemplo: "Falta experiência específica em Docker e containerização"
-   - Exemplo: "Não demonstra conhecimento em AWS ou cloud computing"
-   - Exemplo: "Ausência de experiência com metodologias ágeis (Scrum/Kanban)"
-   - Seja específico sobre o que falta, não genérico
-
-4. STRENGTHS (Pontos Fortes):
-   - Identifique pontos fortes específicos do candidato
-   - Exemplo: "Experiência sólida em React com componentes reutilizáveis"
-
-5. WEAKNESSES (Pontos de Melhoria):
-   - Identifique pontos de melhoria específicos do candidato
-   - Exemplo: "Falta de experiência em tecnologias específicas"
-
-6. FORMATAÇÃO:
-   - TODOS os campos de lista devem ser arrays de strings simples
-   - Cada item deve ser uma análise específica e detalhada
-   - Evite respostas genéricas ou vagas
-   - Baseie-se no conteúdo real do currículo fornecido
+REGRAS OBRIGATÓRIAS:
+- Use apenas informações presentes no currículo; não invente dados.
+- Sempre ancore cada item em evidências ou deixe claro que a informação não está disponível.
+- Considere a descrição da etapa para priorizar quais requisitos são destacados.
+- Todos os arrays devem seguir exatamente as quantidades solicitadas.
+- Não inclua campos adicionais no JSON.
 """
 
             prompt = (
@@ -542,14 +498,25 @@ INSTRUÇÕES DETALHADAS:
                 missing_requirements = ensure_string_list(avaliacao.get("requisitos_nao_atendidos", []))
                 recommendations = []  # Removido - não será usado
 
+            structured = prepare_structured_analysis(
+                text_content=text_content,
+                stage_description=stage_description,
+                requirements=requirements,
+                raw_strengths=strengths,
+                raw_weaknesses=weaknesses,
+                raw_matched=matched_requirements,
+                raw_missing=missing_requirements,
+                raw_score=score,
+            )
+
             evaluation_result = EvaluationResult(
-                score=score,
-                analysis=analysis,
-                matched_requirements=matched_requirements,
-                missing_requirements=missing_requirements,
-                strengths=strengths,
-                weaknesses=weaknesses,
-                recommendations=recommendations
+                score=structured["score"],
+                analysis=structured["analysis"],
+                matched_requirements=structured["matched_requirements"],
+                missing_requirements=structured["missing_requirements"],
+                strengths=structured["strengths"],
+                weaknesses=structured["weaknesses"],
+                recommendations=recommendations or structured["weaknesses"],
             )
 
             print(f"[IA] ========== RESULTADO FINAL DA ANÁLISE ==========")
@@ -719,13 +686,6 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
         print(f"[IA] ========== CONTEÚDO COMPLETO ==========")
         print(f"[IA] {text_content}")
         print(f"[IA] ========== FIM DO CONTEÚDO ==========")
-        print(f"[IA] ========== DEBUG PROMPT TEMPLATE ==========")
-        print(f"[IA] Prompt template recebido: {request.prompt_template[:200] if request.prompt_template else 'NENHUM'}...")
-        if request.prompt_template:
-            print(f"[IA] ========== PROMPT TEMPLATE COMPLETO ==========")
-            print(f"[IA] {request.prompt_template}")
-            print(f"[IA] ========== FIM DO PROMPT TEMPLATE ==========")
-
         # Análise da IA
         runs[run_id]["progress"] = 90
         print(f"[IA] Chamando analyze_candidate_with_openai com config: {config}")
@@ -735,7 +695,7 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
             stage_description,
             requirements_payload,
             config,
-            prompt_template=request.prompt_template,
+            prompt_template=None,
         )
         print(f"[IA] Resultado da análise: score={evaluation.score}, strengths={len(evaluation.strengths)}, weaknesses={len(evaluation.weaknesses)}")
 

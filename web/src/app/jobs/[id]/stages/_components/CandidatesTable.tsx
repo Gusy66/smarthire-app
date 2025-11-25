@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from 'react'
 import type { BoardLaneItem, Stage } from '../_lib/types'
-import CandidateDrawer from './CandidateDrawer'
 
 export default function CandidatesTable({
   stage,
@@ -20,8 +19,6 @@ export default function CandidatesTable({
   filters?: { query?: string; status?: string; source?: string }
 }) {
   const [query, setQuery] = useState('')
-  const [drawer, setDrawer] = useState<{ open: boolean; item: BoardLaneItem | null }>({ open: false, item: null })
-
   const filtered = useMemo(() => {
     const base = items
     const qCombined = (filters?.query ?? query).trim().toLowerCase()
@@ -84,9 +81,25 @@ export default function CandidatesTable({
                     )}
                   </td>
                   <td className="py-3 px-5">
-                    <div className="flex items-center gap-2 justify-end">
-                      <button className="p-2 rounded-full border border-gray-200 hover:bg-gray-100" title="Visualizar" onClick={()=>{ onSelect?.(it); setDrawer({ open: true, item: it }) }}>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-gray-700"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <div className="flex items-center justify-end">
+                      <button
+                        className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                        onClick={() => onSelect?.(it)}
+                        title="Ver análise da IA"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          className="h-4 w-4 text-gray-600"
+                          aria-hidden="true"
+                        >
+                          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                        <span>Ver análise</span>
                       </button>
                     </div>
                   </td>
@@ -96,17 +109,6 @@ export default function CandidatesTable({
           </tbody>
         </table>
       </div>
-
-      {drawer.open && drawer.item && (
-        <CandidateDrawer
-          open={drawer.open}
-          onClose={()=>setDrawer({ open: false, item: null })}
-          stageId={stage.id}
-          applicationId={drawer.item.application_id}
-          applicationStageId={drawer.item.application_stage_id}
-          candidate={{ id: drawer.item.candidate.id, name: drawer.item.candidate.name, email: drawer.item.candidate.email }}
-        />
-      )}
     </div>
   )
 }

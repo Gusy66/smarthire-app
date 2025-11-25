@@ -7,6 +7,7 @@ from typing import Dict, Any
 import os
 from dotenv import load_dotenv
 import logging
+from transcript_analysis import analyze_transcript_content
 
 # Carregar variáveis de ambiente com tolerância a erros (ex.: arquivo .env com codificação inválida)
 try:
@@ -55,6 +56,7 @@ class EvaluateRequest(BaseModel):
     resume_path: str | None = None
     audio_path: str | None = None
     transcript_path: str | None = None
+    transcript_text: str | None = None
 
 class RunStatus(BaseModel):
     id: str
@@ -232,19 +234,56 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
         
         # Análise da IA
         runs[run_id]["progress"] = 90
-        evaluation = await analyze_candidate(text_content, stage_description, requirements)
         
-        runs[run_id]["status"] = "succeeded"
-        runs[run_id]["progress"] = 100
-        runs[run_id]["result"] = {
-            "score": evaluation.score,
-            "analysis": evaluation.analysis,
-            "matched_requirements": evaluation.matched_requirements,
-            "missing_requirements": evaluation.missing_requirements,
-            "stage_id": request.stage_id,
-            "application_id": request.application_id
-        }
-        logger.info(f"Avaliação {run_id} concluída com sucesso - Score: {evaluation.score}")
+        if request.transcript_text or request.transcript_path:
+            # Se houver transcrição (texto ou path), usa a análise específica de transcrição
+            content_to_analyze = request.transcript_text
+            if not content_to_analyze and request.transcript_path:
+                 # Extrair texto do arquivo de transcrição (suporta PDF/DOCX/TXT/JSON)
+                 try:
+                     print(f"[IA] Extraindo texto da transcrição: {request.transcript_path}")
+                     extracted_text, _ = await extract_resume_text(
+                         request.transcript_path, 
+                         request.transcript_signed_url,
+                         request.transcript_bucket
+                     )
+                     content_to_analyze = extracted_text
+                 except Exception as e:
+                     print(f"[IA] Erro ao extrair transcrição: {e}")
+                     # Fallback para simulação se falhar extração
+                     content_to_analyze = await analyze_transcript(request.transcript_path)
+            
+            evaluation_dict = await analyze_transcript_content(content_to_analyze, stage_description, requirements)
+            
+            runs[run_id]["status"] = "succeeded"
+            runs[run_id]["progress"] = 100
+            runs[run_id]["result"] = {
+                "score": evaluation_dict["score"],
+                "analysis": evaluation_dict["analysis"],
+                "matched_requirements": evaluation_dict["matched_requirements"],
+                "missing_requirements": evaluation_dict["missing_requirements"],
+                "strengths": evaluation_dict["strengths"],
+                "weaknesses": evaluation_dict["weaknesses"],
+                "stage_id": request.stage_id,
+                "application_id": request.application_id
+            }
+            logger.info(f"Avaliação de transcrição {run_id} concluída - Score: {evaluation_dict['score']}")
+            
+        else:
+            # Fallback para análise padrão (currículo/audio simulado)
+            evaluation = await analyze_candidate(text_content, stage_description, requirements)
+            
+            runs[run_id]["status"] = "succeeded"
+            runs[run_id]["progress"] = 100
+            runs[run_id]["result"] = {
+                "score": evaluation.score,
+                "analysis": evaluation.analysis,
+                "matched_requirements": evaluation.matched_requirements,
+                "missing_requirements": evaluation.missing_requirements,
+                "stage_id": request.stage_id,
+                "application_id": request.application_id
+            }
+            logger.info(f"Avaliação {run_id} concluída com sucesso - Score: {evaluation.score}")
 
     except Exception as e:
         logger.error(f"Erro na avaliação {run_id}: {str(e)}")

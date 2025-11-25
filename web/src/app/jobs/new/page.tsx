@@ -116,6 +116,24 @@ export default function NewJobPage() {
   const [availableCandidates, setAvailableCandidates] = useState<Candidate[]>([])
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([])
 
+  const steps = [
+    { id: 'basic', label: 'Informações Básicas' },
+    { id: 'details', label: 'Detalhes da Vaga' },
+    { id: 'process', label: 'Processo Seletivo' },
+  ] as const
+
+  const activeStepIndex = steps.findIndex((step) => step.id === activeTab)
+  const isLastStep = activeStepIndex === steps.length - 1
+
+  const handleNextStep = () => {
+    if (isLastStep) return
+    const nextStep = steps[activeStepIndex + 1]
+    if (nextStep) {
+      setActiveTab(nextStep.id)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
+
   useEffect(() => {
     fetch('/api/candidates?page=1&page_size=100', { credentials: 'same-origin' })
       .then((r) => r.json())
@@ -148,23 +166,63 @@ export default function NewJobPage() {
       const job = await res.json()
       const jobId = job?.id
 
+      let firstStageId: string | null = null
+
       if (jobId && form.stages.length > 0) {
         for (const stage of form.stages) {
-          await fetch(`/api/jobs/${jobId}/stages`, {
+          const stageRes = await fetch(`/api/jobs/${jobId}/stages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(stage),
           })
+          if (!stageRes.ok) {
+            const err = await stageRes.json().catch(() => null)
+            notify({
+              title: 'Erro ao criar etapa',
+              description: err?.error?.message || 'Não foi possível criar uma das etapas da vaga.',
+              variant: 'error',
+            })
+            return
+          }
+        }
+      }
+
+      if (jobId) {
+        const stagesRes = await fetch(`/api/jobs/${jobId}/stages`, { credentials: 'same-origin' })
+        if (stagesRes.ok) {
+          const stagesJson = await stagesRes.json().catch(() => null)
+          firstStageId = stagesJson?.items?.[0]?.id ?? null
         }
       }
 
       if (jobId && selectedCandidateIds.length > 0) {
         for (const candidateId of selectedCandidateIds) {
-          await fetch(`/api/jobs/${jobId}/applications`, {
+          const applicationRes = await fetch(`/api/jobs/${jobId}/applications`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ candidate_id: candidateId }),
           })
+
+          if (!applicationRes.ok) {
+            const err = await applicationRes.json().catch(() => null)
+            notify({
+              title: 'Erro ao atribuir candidato',
+              description: err?.error?.message || 'Não foi possível vincular um candidato à vaga.',
+              variant: 'error',
+            })
+            continue
+          }
+
+          const applicationJson = await applicationRes.json().catch(() => null)
+          const applicationId = applicationJson?.id
+
+          if (applicationId && firstStageId) {
+            await fetch('/api/applications/stages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ application_id: applicationId, stage_id: firstStageId }),
+            }).catch(() => null)
+          }
         }
       }
 
@@ -257,29 +315,98 @@ export default function NewJobPage() {
 
         <div className="-mx-4 md:-mx-8 pb-12">
           <div className="bg-white border-t border-b border-gray-200 shadow-sm px-6 md:px-12 lg:px-16 py-8">
-          <div className="flex border-b border-gray-200 text-sm font-medium text-gray-600">
-            <button
-              type="button"
-              onClick={() => setActiveTab('basic')}
-              className={`flex-1 px-6 py-3 text-center transition-colors ${activeTab === 'basic' ? 'text-gray-900 border-b-2 border-gray-900 bg-white' : 'bg-gray-50 hover:text-gray-900'}`}
-            >
-              Informações Básicas
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('details')}
-              className={`flex-1 px-6 py-3 text-center transition-colors ${activeTab === 'details' ? 'text-gray-900 border-b-2 border-gray-900 bg-white' : 'bg-gray-50 hover:text-gray-900'}`}
-            >
-              Detalhes da Vaga
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('process')}
-              className={`flex-1 px-6 py-3 text-center transition-colors ${activeTab === 'process' ? 'text-gray-900 border-b-2 border-gray-900 bg-white' : 'bg-gray-50 hover:text-gray-900'}`}
-            >
-              Processo Seletivo
-            </button>
-          </div>
+            <div className="flex flex-col gap-6">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="w-full">
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center gap-3">
+                      {steps.map((step, index) => {
+                        const isCompleted = index < activeStepIndex
+                        const isCurrent = index === activeStepIndex
+                        return (
+                          <div key={step.id} className="flex flex-1 items-center gap-3 min-w-[120px]">
+                            <div className="flex flex-col items-center gap-1 text-center">
+                              <div
+                                className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold transition-colors ${
+                                  isCompleted
+                                    ? 'bg-green-600 text-white'
+                                    : isCurrent
+                                    ? 'bg-green-100 text-green-700 border border-green-200'
+                                    : 'bg-gray-200 text-gray-500'
+                                }`}
+                              >
+                                {isCompleted ? '✓' : index + 1}
+                              </div>
+                              <span
+                                className={`text-xs font-medium transition-colors ${
+                                  isCurrent ? 'text-gray-900' : 'text-gray-500'
+                                }`}
+                              >
+                                {step.label}
+                              </span>
+                            </div>
+                            {index < steps.length - 1 && (
+                              <div
+                                className={`hidden h-0.5 flex-1 rounded-full sm:block ${
+                                  index < activeStepIndex ? 'bg-green-500' : 'bg-gray-200'
+                                }`}
+                              />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                      <div
+                        className="h-full rounded-full bg-green-500 transition-all duration-300 ease-out"
+                        style={{ width: `${((activeStepIndex + 1) / steps.length) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+                {!isLastStep && (
+                  <button
+                    type="button"
+                    onClick={handleNextStep}
+                    className="inline-flex items-center gap-2 self-start rounded-lg bg-green-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700"
+                  >
+                    Avançar
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <div className="flex border-b border-gray-200 text-sm font-medium text-gray-600">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('basic')}
+                  className={`flex-1 px-6 py-3 text-center transition-colors ${
+                    activeTab === 'basic' ? 'text-gray-900 border-b-2 border-gray-900 bg-white' : 'bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  Informações Básicas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('details')}
+                  className={`flex-1 px-6 py-3 text-center transition-colors ${
+                    activeTab === 'details' ? 'text-gray-900 border-b-2 border-gray-900 bg-white' : 'bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  Detalhes da Vaga
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('process')}
+                  className={`flex-1 px-6 py-3 text-center transition-colors ${
+                    activeTab === 'process' ? 'text-gray-900 border-b-2 border-gray-900 bg-white' : 'bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  Processo Seletivo
+                </button>
+              </div>
+            </div>
 
           <form id="job-create-form" onSubmit={handleSubmit} className="space-y-8">
             {activeTab === 'basic' && (

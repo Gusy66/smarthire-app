@@ -66,25 +66,36 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Não carrega mais requisitos específicos - usa apenas a descrição da etapa
   const requirements: any[] = []
 
-  // Descobre template vinculado ou padrão do usuário
-  const { data: stageTemplate } = await supabase
-    .from('stage_prompt_templates')
-    .select('prompt_templates(content)')
-    .eq('stage_id', stageId)
-    .maybeSingle()
+  // Garantir que temos um currículo válido mesmo se o front não enviar
+  let finalResumePath = resume_path
+  let finalResumeBucket = resume_bucket
+  let finalResumeSignedUrl = resume_signed_url
 
-  let promptTemplateContent: string | null = stageTemplate?.prompt_templates?.content ?? null
-
-  if (!promptTemplateContent) {
-    const { data: defaultTemplate } = await supabase
-      .from('prompt_templates')
-      .select('content')
-      .eq('user_id', user.id)
-      .eq('is_default', true)
+  if (!finalResumePath || !finalResumeBucket) {
+    const { data: applicationRow } = await supabase
+      .from('applications')
+      .select('candidate_id')
+      .eq('id', application_id)
       .maybeSingle()
 
-    promptTemplateContent = defaultTemplate?.content ?? null
+    if (applicationRow?.candidate_id) {
+      const { data: candidateRow } = await supabase
+        .from('candidates')
+        .select('resume_path, resume_bucket')
+        .eq('id', applicationRow.candidate_id)
+        .maybeSingle()
+
+      if (!finalResumePath && candidateRow?.resume_path) {
+        finalResumePath = candidateRow.resume_path
+      }
+      if (!finalResumeBucket && candidateRow?.resume_bucket) {
+        finalResumeBucket = candidateRow.resume_bucket
+      }
+    }
   }
+
+  // Template customizado não é mais utilizado pelo serviço de IA
+  const promptTemplateContent: string | null = null
 
   // Buscar documentos de etapa se document_path não foi fornecido diretamente
   let finalDocumentPath = document_path
@@ -122,9 +133,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   const payload = {
     stage_id: stageId,
     application_id,
-    resume_path,
-    resume_bucket,
-    resume_signed_url,
+    resume_path: finalResumePath,
+    resume_bucket: finalResumeBucket,
+    resume_signed_url: finalResumeSignedUrl,
     audio_path,
     audio_bucket,
     audio_signed_url,

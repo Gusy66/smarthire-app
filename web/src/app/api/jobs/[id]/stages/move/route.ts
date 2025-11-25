@@ -22,7 +22,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   // valida acesso à vaga e etapa destino
   const { data: job, error: jobErr } = await supabase.from('jobs').select('id, company_id, created_by').eq('id', jobId).maybeSingle()
   if (jobErr || !job) return Response.json({ error: { code: 'not_found', message: 'Vaga não encontrada' } }, { status: 404 })
-  if (job.company_id !== user.company_id || job.created_by !== user.id) return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga' } }, { status: 403 })
+  if (job.company_id !== user.company_id) return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga' } }, { status: 403 })
 
   const { data: destStage, error: destErr } = await supabase.from('job_stages').select('id, job_id').eq('id', to_stage_id).maybeSingle()
   if (destErr || !destStage || destStage.job_id !== jobId) return Response.json({ error: { code: 'not_found', message: 'Etapa de destino inválida' } }, { status: 404 })

@@ -16,11 +16,38 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   const body = await req.json()
-  const { resume_path, resume_bucket } = body || {}
+  const {
+    resume_path,
+    resume_bucket,
+    name,
+    email,
+    phone,
+    city,
+    state,
+    address,
+    children,
+    gender,
+    languages,
+    education
+  } = body || {}
 
-  if (!resume_path || !resume_bucket) {
+  const updates: Record<string, any> = {}
+  if (resume_path) updates.resume_path = resume_path
+  if (resume_bucket) updates.resume_bucket = resume_bucket
+  if (name) updates.name = name
+  if (email) updates.email = email
+  if (phone) updates.phone = phone
+  if (city !== undefined) updates.city = city
+  if (state !== undefined) updates.state = state
+  if (address !== undefined) updates.address = address
+  if (children !== undefined) updates.children = children
+  if (gender !== undefined) updates.gender = gender
+  if (languages !== undefined) updates.languages = languages
+  if (education !== undefined) updates.education = education
+
+  if (Object.keys(updates).length === 0) {
     return Response.json({
-      error: { code: 'validation_error', message: 'resume_path e resume_bucket são obrigatórios' },
+      error: { code: 'validation_error', message: 'Nenhum dado para atualizar' },
     }, { status: 400 })
   }
 
@@ -44,10 +71,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const { error: updateError } = await supabase
     .from('candidates')
-    .update({
-      resume_path,
-      resume_bucket,
-    })
+    .update(updates)
     .eq('id', candidateId)
 
   if (updateError) {

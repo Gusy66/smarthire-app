@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   query = query.order('created_at', { ascending: false }).range(from, to)
   const { data, error, count } = await query
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
-  const candidates = (data ?? []).filter((c) => (c.created_by ?? user.id) === user.id)
+  const candidates = data ?? []
 
   // enriquecer com métricas: vaga mais recente, última atividade e média de score
   const candidateIds = candidates.map((c) => c.id)

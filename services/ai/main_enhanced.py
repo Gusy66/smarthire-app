@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import base64
 import os
 from dotenv import load_dotenv, dotenv_values
+from resume_analysis_utils import prepare_structured_analysis
 # Carregamento seguro de variáveis de ambiente
 def load_environment_variables():
     """
@@ -414,7 +415,7 @@ async def analyze_candidate_with_openai(
             ])
             
             base_prompt = prompt_template or """
-Analise o candidato para a vaga baseado EXCLUSIVAMENTE nas informações fornecidas.
+Leia com atenção a DESCRIÇÃO DA ETAPA definida pelo RH e avalie o currículo do candidato somente com base no texto real fornecido.
 
 DESCRIÇÃO DA ETAPA:
 {{STAGE_DESCRIPTION}}
@@ -422,35 +423,34 @@ DESCRIÇÃO DA ETAPA:
 REQUISITOS DA ETAPA:
 {{REQUIREMENTS_LIST}}
 
-INFORMAÇÕES DO CANDIDATO (CURRÍCULO REAL):
+CURRÍCULO (texto bruto do candidato):
 {{CANDIDATE_INFO}}
 
-INSTRUÇÕES CRÍTICAS - LEIA ATENTAMENTE:
-1. USE APENAS as informações reais fornecidas no campo "INFORMAÇÕES DO CANDIDATO"
-2. NÃO INVENTE nenhum dado fictício, nome, empresa ou experiência
-3. Se o currículo estiver vazio, mencione explicitamente "CURRÍCULO VAZIO"
-4. Baseie-se EXCLUSIVAMENTE no texto real do currículo fornecido
-5. Se não houver informações específicas, mencione "INFORMAÇÃO NÃO DISPONÍVEL NO CURRÍCULO"
+OBJETIVO:
+1. Verificar aderência do currículo à etapa descrita.
+2. Emitir uma pontuação de aderência entre 0 e 10.
+3. Produzir EXATAMENTE:
+   • 4 pontos fortes identificados no currículo.
+   • 3 oportunidades de melhoria.
+   • 3 requisitos importantes que o candidato atende.
+   • A lista completa dos requisitos pendentes (não atendidos).
 
-FORMATO DE RESPOSTA OBRIGATÓRIO:
-- Responda APENAS com JSON válido em um dos formatos permitidos:
-  A) Formato novo (campos na raiz):
-     {"score": number, "analysis": string, "strengths": string[], "weaknesses": string[], "matched_requirements": string[], "missing_requirements": string[]}
-  B) Formato antigo (com "avaliacao"):
-     {"avaliacao": {"pontuacao": number, "justificativa": string, "pontos_fortes": string[], "pontos_que_deixam_a_desejar": string[], "requisitos_atendidos": string[], "requisitos_nao_atendidos": string[]}}
-- É ESTRITAMENTE PROIBIDO incluir quaisquer outros campos além dos acima. NÃO inclua campos como "candidato", "nome" ou qualquer campo adicional.
+FORMATO DE RESPOSTA (JSON ÚNICO):
+{
+  "score": number,
+  "analysis": string explicando brevemente como a descrição foi interpretada,
+  "strengths": [4 strings com evidências reais; use "Informação não encontrada no currículo." quando faltar dado],
+  "weaknesses": [3 strings com oportunidades de melhoria baseadas no currículo],
+  "matched_requirements": [3 strings descrevendo requisitos atendidos; quando não houver evidência, diga explicitamente que não foi possível confirmar],
+  "missing_requirements": [strings listando cada requisito não atendido]
+}
 
 REGRAS OBRIGATÓRIAS:
-- Se não encontrar experiências específicas no currículo, liste "Nenhuma experiência específica identificada no currículo"
-- Se não encontrar formação, liste "Formação acadêmica não mencionada no currículo"
-- Se não encontrar habilidades, liste "Habilidades não detalhadas no currículo"
-- Para requisitos: compare exatamente com o que está escrito no currículo fornecido
-- Se o currículo estiver vazio, retorne pontuação 0 e mencione explicitamente
-
-ORIENTAÇÕES IMPORTANTES:
-- Analise LINHA POR LINHA o conteúdo do currículo
-- Seja específico sobre o que FOI ENCONTRADO vs NÃO FOI ENCONTRADO
-- Não generalize - use apenas o que está escrito no texto fornecido
+- Use apenas informações presentes no currículo; não invente dados.
+- Sempre ancore cada item em evidências ou deixe claro que a informação não está disponível.
+- Considere a descrição da etapa para priorizar quais requisitos são destacados.
+- Todos os arrays devem seguir exatamente as quantidades solicitadas.
+- Não inclua campos adicionais no JSON.
 """
 
             prompt = (
@@ -492,9 +492,24 @@ ORIENTAÇÕES IMPORTANTES:
                             "properties": {
                                 "score": {"type": "number", "minimum": 0, "maximum": 10},
                                 "analysis": {"type": "string"},
-                                "strengths": {"type": "array", "items": {"type": "string"}},
-                                "weaknesses": {"type": "array", "items": {"type": "string"}},
-                                "matched_requirements": {"type": "array", "items": {"type": "string"}},
+                                "strengths": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "minItems": 4,
+                                    "maxItems": 4
+                                },
+                                "weaknesses": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "minItems": 3,
+                                    "maxItems": 3
+                                },
+                                "matched_requirements": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "minItems": 3,
+                                    "maxItems": 3
+                                },
                                 "missing_requirements": {"type": "array", "items": {"type": "string"}}
                             },
                             "required": [
@@ -639,14 +654,25 @@ ORIENTAÇÕES IMPORTANTES:
             except Exception:
                 score = 0.0
 
+            structured = prepare_structured_analysis(
+                text_content=text_content,
+                stage_description=stage_description,
+                requirements=requirements,
+                raw_strengths=strengths,
+                raw_weaknesses=weaknesses,
+                raw_matched=matched_requirements,
+                raw_missing=missing_requirements,
+                raw_score=score,
+            )
+
             evaluation_result = EvaluationResult(
-                score=score,
-                analysis=analysis,
-                matched_requirements=matched_requirements,
-                missing_requirements=missing_requirements,
-                strengths=strengths,
-                weaknesses=weaknesses,
-                recommendations=recommendations
+                score=structured["score"],
+                analysis=structured["analysis"],
+                matched_requirements=structured["matched_requirements"],
+                missing_requirements=structured["missing_requirements"],
+                strengths=structured["strengths"],
+                weaknesses=structured["weaknesses"],
+                recommendations=recommendations or structured["weaknesses"],
             )
 
             print(f"[IA] ========== RESULTADO FINAL DA ANÁLISE ==========")
@@ -668,160 +694,30 @@ ORIENTAÇÕES IMPORTANTES:
         # Fallback para análise simulada
         return await analyze_candidate_simulated(text_content, stage_description, requirements)
 
-# Análise simulada (fallback) - MELHORADA PARA USAR DADOS REAIS
 async def analyze_candidate_simulated(
     text_content: str,
     stage_description: str,
-    requirements: list[dict]
+    requirements: list[dict],
 ) -> EvaluationResult:
     """
-    Análise simulada do candidato baseada exclusivamente no conteúdo real do currículo
-    """
-    await asyncio.sleep(2)  # Simula processamento
-
-    # Se não houver conteúdo de currículo, retornar análise vazia
-    if not text_content or not text_content.strip():
-        return EvaluationResult(
-            score=0.0,
-            analysis="Não foi possível realizar a análise: currículo vazio ou não fornecido.",
-            matched_requirements=[],
-            missing_requirements=["Currículo não fornecido"],
-            strengths=[],
-            weaknesses=["Ausência de informações do candidato"],
-            recommendations=["Fornecer currículo para análise"]
-        )
-
-    text_lower = text_content.lower()
-    stage_lower = stage_description.lower()
-
-    # Pontuação base (0-10)
-    base_score = 5.0
-
-    # Análise de correspondência com descrição da etapa
-    stage_keywords = ["vendas", "comercial", "atendimento", "cliente", "negociação", "desenvolvimento", "programação", "análise", "gestão", "liderança"]
-    stage_matches = sum(1 for keyword in stage_keywords if keyword in text_lower)
-    stage_bonus = min(stage_matches * 0.3, 1.5)
-
-    # Análise de requisitos baseada no conteúdo real
-    matched_reqs = []
-    missing_reqs = []
-    strengths = []
-    weaknesses = []
-    req_bonus = 0.0
-
-    # Extrair informações reais do currículo para análise
-    lines = [line.strip() for line in text_content.split('\n') if line.strip()]
-    experiences = []
-    education = []
-    skills = []
-
-    for line in lines:
-        if any(keyword in line.lower() for keyword in ["experiência", "trabalhou", "atuou", "cargo", "empresa"]):
-            experiences.append(line)
-        elif any(keyword in line.lower() for keyword in ["formação", "graduação", "curso", "universidade", "faculdade"]):
-            education.append(line)
-        elif any(keyword in line.lower() for keyword in ["habilidade", "competência", "conhecimento", "skill"]):
-            skills.append(line)
-
-    # Análise baseada em experiências reais encontradas
-    if experiences:
-        exp_text = ' '.join(experiences).lower()
-        if any(word in exp_text for word in ["vendas", "comercial", "cliente", "atendimento"]):
-            strengths.append("Possui experiência comprovada em área comercial/vendas baseada no currículo")
-            matched_reqs.append("Experiência em vendas/comercial identificada no currículo")
-            req_bonus += 1.0
-        if any(word in exp_text for word in ["desenvolvimento", "programação", "software", "sistema"]):
-            strengths.append("Demonstra experiência em desenvolvimento de software")
-            matched_reqs.append("Experiência em desenvolvimento identificada")
-            req_bonus += 1.0
-        if any(word in exp_text for word in ["gestão", "liderança", "equipe", "coordenação"]):
-            strengths.append("Apresenta experiência em gestão e liderança")
-            matched_reqs.append("Experiência em gestão identificada")
-            req_bonus += 0.8
-
-    # Análise baseada em formação
-    if education:
-        edu_text = ' '.join(education).lower()
-        if any(word in edu_text for word in ["administração", "engenharia", "computação", "sistemas"]):
-            strengths.append("Formação acadêmica relevante identificada no currículo")
-            req_bonus += 0.5
-
-    # Análise baseada em habilidades
-    if skills:
-        skills_text = ' '.join(skills).lower()
-        if any(word in skills_text for word in ["comunicação", "trabalho em equipe", "liderança"]):
-            strengths.append("Habilidades interpessoais identificadas no currículo")
-            req_bonus += 0.3
-
-    # Análise específica dos requisitos da etapa baseada no conteúdo real
-    for req in requirements:
-        req_text = req.get("label", "").lower()
-        req_desc = req.get("description", "").lower()
-        req_weight = req.get("weight", 1.0)
-
-        # Verificar se o requisito está presente no conteúdo real do currículo
-        if req_text in text_lower or req_desc in text_lower:
-            matched_reqs.append(f"Requisito atendido: {req.get('label', '')} - {req.get('description', '')}")
-            req_bonus += 0.5 * req_weight
-        else:
-            missing_reqs.append(f"Requisito não atendido: {req.get('label', '')} - {req.get('description', '')}")
-
-    # Se não encontrou pontos fortes específicos, criar baseados no conteúdo geral
-    if not strengths and text_content.strip():
-        word_count = len(text_content.split())
-        if word_count > 100:
-            strengths.append("Currículo detalhado com informações abrangentes")
-        elif word_count > 50:
-            strengths.append("Currículo com informações relevantes")
-        else:
-            strengths.append("Currículo básico fornecido")
-
-    # Análise de pontos de melhoria baseados na ausência de informações
-    if not any(word in text_lower for word in ["experiência", "trabalhou", "atuou"]):
-        weaknesses.append("Ausência de informações sobre experiências profissionais")
-        missing_reqs.append("Experiência profissional não detalhada no currículo")
-
-    if not any(word in text_lower for word in ["formação", "graduação", "curso"]):
-        weaknesses.append("Ausência de informações sobre formação acadêmica")
-        missing_reqs.append("Formação acadêmica não informada")
-
-    # Cálculo da pontuação final baseada no conteúdo real
-    content_score = min(len(strengths) * 1.5 + req_bonus, 5.0)
-    final_score = min(base_score + stage_bonus + content_score, 10.0)
-
-    # Gera análise textual baseada exclusivamente no conteúdo real
-    analysis = f"""
-    Análise baseada exclusivamente no conteúdo do currículo fornecido:
-
-    ✅ Informações encontradas no currículo:
-    - {len(experiences)} menções à experiência profissional
-    - {len(education)} menções à formação acadêmica
-    - {len(skills)} menções à habilidades/competências
-    - {len(matched_reqs)} requisitos da etapa atendidos
-    - {stage_matches} palavras-chave da descrição da etapa encontradas
-
-    ⚠️ Lacunas identificadas:
-    - {len(missing_reqs)} requisitos da etapa não atendidos
-    - Principais pontos de melhoria baseados no conteúdo fornecido
-
-    📊 Pontuação: {final_score:.1f}/10 (baseada na quantidade e qualidade das informações do currículo)
+    Análise simulada utilizando heurísticas determinísticas para seguir o formato exigido.
     """
 
-    # Adiciona pontos de melhoria específicos se não houver requisitos específicos
-    if not weaknesses:
-        if len(text_content) < 200:
-            weaknesses.append("Currículo muito conciso - considere adicionar mais detalhes sobre experiências")
-        else:
-            weaknesses.append("Currículo analisado com sucesso - nenhuma fraqueza crítica identificada")
+    await asyncio.sleep(2)
+    structured = prepare_structured_analysis(
+        text_content=text_content,
+        stage_description=stage_description,
+        requirements=requirements,
+    )
 
     return EvaluationResult(
-        score=round(final_score, 1),
-        analysis=analysis.strip(),
-        matched_requirements=matched_reqs,
-        missing_requirements=missing_reqs,
-        strengths=strengths,
-        weaknesses=weaknesses,
-        recommendations=["Revisar currículo para próxima análise", "Considerar entrevista técnica"]
+        score=structured["score"],
+        analysis=structured["analysis"],
+        matched_requirements=structured["matched_requirements"],
+        missing_requirements=structured["missing_requirements"],
+        strengths=structured["strengths"],
+        weaknesses=structured["weaknesses"],
+        recommendations=structured["weaknesses"],
     )
 
 # Buscar configurações do usuário - MELHORADA COM VALIDAÇÕES
@@ -1120,13 +1016,6 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
         print(f"[IA] ========== CONTEÚDO COMPLETO ==========")
         print(f"[IA] {text_content}")
         print(f"[IA] ========== FIM DO CONTEÚDO ==========")
-        print(f"[IA] ========== DEBUG PROMPT TEMPLATE ==========")
-        print(f"[IA] Prompt template recebido: {request.prompt_template[:200] if request.prompt_template else 'NENHUM'}...")
-        if request.prompt_template:
-            print(f"[IA] ========== PROMPT TEMPLATE COMPLETO ==========")
-            print(f"[IA] {request.prompt_template}")
-            print(f"[IA] ========== FIM DO PROMPT TEMPLATE ==========")
-
         # Análise da IA
         runs[run_id]["progress"] = 90
         print(f"[IA] Chamando analyze_candidate_with_openai com config: {config}")
@@ -1136,7 +1025,7 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
             stage_description,
             requirements_payload,
             config,
-            prompt_template=request.prompt_template,
+            prompt_template=None,
         )
         print(f"[IA] Resultado da análise: score={evaluation.score}, strengths={len(evaluation.strengths)}, weaknesses={len(evaluation.weaknesses)}")
         
@@ -1155,7 +1044,7 @@ async def process_evaluation(run_id: str, request: EvaluateRequest):
             "extraction_warnings": extraction_warnings,
             "stage_id": request.stage_id,
             "application_id": request.application_id,
-            "prompt_template": request.prompt_template,
+            "prompt_template": None,
             "stage": request.stage.model_dump() if request.stage else None,
             "requirements": [req.model_dump() for req in (request.requirements or [])],
         }

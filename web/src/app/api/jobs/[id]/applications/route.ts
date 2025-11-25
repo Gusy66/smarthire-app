@@ -46,7 +46,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const candidateById = new Map(
     (candidates ?? [])
-      .filter((c) => c.created_by === user.id && c.company_id === user.company_id)
+      .filter((c) => c.company_id === user.company_id)
       .map((c) => [c.id, c])
   )
   const items = apps

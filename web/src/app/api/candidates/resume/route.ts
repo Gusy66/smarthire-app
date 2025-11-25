@@ -21,8 +21,14 @@ export async function GET(req: NextRequest) {
       return Response.json({ error: { code: 'invalid_bucket', message: 'Bucket inválido' } }, { status: 400 })
     }
 
+    // Normalizar path (alguns registros armazenam "bucket/arquivo")
+    let normalizedPath = path.replace(/^\//, '')
+    if (normalizedPath.startsWith(`${bucket}/`)) {
+      normalizedPath = normalizedPath.slice(bucket.length + 1)
+    }
+
     // Gerar URL assinada do Supabase
-    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60) // 1 hora
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(normalizedPath, 60 * 60) // 1 hora
 
     if (error) {
       return Response.json({ error: { code: 'storage_error', message: error.message } }, { status: 500 })

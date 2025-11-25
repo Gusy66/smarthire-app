@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useToast } from '@/components/ToastProvider'
-import StageAnalysisPanel from './_components/StageAnalysisPanel'
 import JobStageHeader from './_components/JobStageHeader'
 import CandidatesTable from './_components/CandidatesTable'
 import BulkActions from './_components/BulkActions'
@@ -27,6 +26,46 @@ type StageAnalysisResult = {
   stage_id?: string | null
   application_id?: string | null
   created_at?: string
+}
+
+const analysisStatusStyles: Record<StageAnalysisResult['status'], { label: string; className: string }> = {
+  pending: { label: 'Pendente', className: 'bg-amber-100 text-amber-700' },
+  running: { label: 'Em análise', className: 'bg-blue-100 text-blue-700' },
+  succeeded: { label: 'Concluída', className: 'bg-emerald-100 text-emerald-700' },
+  failed: { label: 'Falhou', className: 'bg-rose-100 text-rose-700' },
+}
+
+const renderAnalysisList = (
+  title: string,
+  items?: string[],
+  emptyMessage?: string,
+  variant: 'positive' | 'negative' | 'neutral' = 'neutral',
+) => {
+  if (!items || items.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
+        <span className="block text-sm font-semibold text-gray-700 mb-1">{title}</span>
+        {emptyMessage || 'Nenhum item identificado.'}
+      </div>
+    )
+  }
+
+  const color = variant === 'positive' ? 'text-emerald-700' : variant === 'negative' ? 'text-rose-700' : 'text-gray-700'
+  const bullet = variant === 'positive' ? '✓' : variant === 'negative' ? '!' : '•'
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+      <span className={`block text-sm font-semibold mb-2 ${color}`}>{title}</span>
+      <ul className="space-y-2 text-sm text-gray-700">
+        {items.map((item, index) => (
+          <li key={`${title}-${index}`} className="flex items-start gap-2">
+            <span className={`mt-0.5 text-xs font-semibold ${color}`}>{bullet}</span>
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 function StagePromptSelector({
@@ -112,6 +151,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 export default function JobStagesPage({ params }: { params: Promise<{ id: string }> }) {
   const { notify } = useToast()
   const [jobId, setJobId] = useState<string | null>(null)
+  const [jobInfo, setJobInfo] = useState<{ id: string; title: string } | null>(null)
   const [stages, setStages] = useState<Stage[]>([])
   const [creating, setCreating] = useState(false)
   const [activeTab, setActiveTab] = useState<string | null>(null)
@@ -119,7 +159,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [board, setBoard] = useState<{ lanes: Record<string, { application_id: string; application_stage_id: string; candidate: any; score: number | null }[]>, stages: Stage[] } | null>(null)
   const [selectedForBulk, setSelectedForBulk] = useState<Record<string, boolean>>({})
   const [filters, setFilters] = useState<CF>({ query: '' })
-  const [currentItem, setCurrentItem] = useState<{ application_id: string; application_stage_id: string; candidate: { id: string; name?: string } } | null>(null)
   const [stageForm, setStageForm] = useState({ name: '', description: '', threshold: 0, stage_weight: 1 })
   const [editingStageId, setEditingStageId] = useState<string | null>(null)
   const [editingStageForm, setEditingStageForm] = useState<{ name: string; description: string; threshold: number; stage_weight: number }>({ name: '', description: '', threshold: 0, stage_weight: 1 })
@@ -131,13 +170,13 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [applications, setApplications] = useState<any[]>([])
   
   // Candidato selecionado para cada etapa
-  const [stageSelectedCandidates, setStageSelectedCandidates] = useState<Record<string, string | null>>({})
   const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([])
   const [stagePromptMap, setStagePromptMap] = useState<Record<string, string | null>>({})
   const [promptLoadingStage, setPromptLoadingStage] = useState<string | null>(null)
-  const [analysisByStage, setAnalysisByStage] = useState<Record<string, StageAnalysisResult | null>>({})
-  const [analysisLoading, setAnalysisLoading] = useState<Record<string, boolean>>({})
-  const [analysisExpanded, setAnalysisExpanded] = useState<Record<string, boolean>>({})
+  const [analysisByStage, setAnalysisByStage] = useState<Record<string, Record<string, StageAnalysisResult | null>>>({})
+  const [analysisLoading, setAnalysisLoading] = useState<Record<string, Record<string, boolean>>>({})
+  const [analysisEvaluating, setAnalysisEvaluating] = useState<Record<string, Record<string, boolean>>>({})
+  const [resumeViewing, setResumeViewing] = useState<Record<string, Record<string, boolean>>>({})
 
   const orderedStages = useMemo(() => {
     return [...stages].sort((a, b) => a.order_index - b.order_index)
@@ -204,6 +243,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         notify({ title: 'Vaga não encontrada', variant: 'error' })
         return
       }
+      setJobInfo(job.item)
 
       const { items } = await api<{ items: Stage[] }>(`/api/jobs/${id}/stages`)
       setStages(items)
@@ -214,11 +254,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         return next
       })
       setAnalysisLoading((prev) => {
-        const next: Record<string, boolean> = {}
-        items.forEach((stage) => { next[stage.id] = prev[stage.id] ?? false })
-        return next
-      })
-      setAnalysisExpanded((prev) => {
         const next: Record<string, boolean> = {}
         items.forEach((stage) => { next[stage.id] = prev[stage.id] ?? false })
         return next
@@ -302,122 +337,216 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     }
   }
 
-  // Função para obter application_id de um candidato específico
-  const getApplicationId = useCallback((candidateId: string | null) => {
-    if (!candidateId) return null
-    const app = applications.find((a) => a.candidate_id === candidateId)
-    return app?.id || null
-  }, [applications])
+  const loadCandidateAnalysis = useCallback(
+    async (
+      stageId: string,
+      candidateId: string,
+      applicationId: string,
+      options?: { silent?: boolean },
+    ) => {
+      if (!stageId || !candidateId || !applicationId) return
 
-  const loadAnalysisForStage = useCallback(async (stageId: string, candidateId: string | null) => {
-    if (!candidateId) {
-      console.log(`[DEBUG] loadAnalysisForStage: candidato não selecionado para etapa ${stageId}`)
-      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
-      return
-    }
-    const applicationId = getApplicationId(candidateId)
-    if (!applicationId) {
-      console.log(`[DEBUG] loadAnalysisForStage: applicationId não encontrado para candidato ${candidateId}`)
-      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
-      return
-    }
-    console.log(`[DEBUG] Carregando análise para etapa ${stageId}, candidato ${candidateId}, applicationId ${applicationId}`)
-    setAnalysisLoading((prev) => ({ ...prev, [stageId]: true }))
-    try {
-      const res = await fetch(`/api/stages/${stageId}/analysis?application_id=${encodeURIComponent(applicationId)}`)
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err?.error?.message || 'Erro ao buscar análise da IA')
-      }
-      const json = await res.json()
-      console.log(`[DEBUG] Análise carregada para etapa ${stageId}:`, json.item)
-      setAnalysisByStage((prev) => ({ ...prev, [stageId]: json.item || null }))
-    } catch (error: any) {
-      console.error('Erro ao carregar análise da etapa', error)
-      notify({ title: 'Erro ao carregar análise', description: error?.message || 'Não foi possível carregar o relatório da IA.', variant: 'error' })
-      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
-    } finally {
-      setAnalysisLoading((prev) => ({ ...prev, [stageId]: false }))
-    }
-  }, [getApplicationId, notify])
+      setAnalysisLoading((prev) => ({
+        ...prev,
+        [stageId]: { ...(prev[stageId] || {}), [candidateId]: true },
+      }))
 
-  // Função para carregar automaticamente a análise mais recente de cada etapa
-  const loadLatestAnalysisForStage = useCallback(async (stageId: string) => {
-    console.log(`[DEBUG] Carregando análise mais recente para etapa ${stageId}`)
-    setAnalysisLoading((prev) => ({ ...prev, [stageId]: true }))
-    try {
-      console.log(`[DEBUG] Fazendo requisição para: /api/stages/${stageId}/analysis/latest`)
-      const res = await fetch(`/api/stages/${stageId}/analysis/latest`)
-      console.log(`[DEBUG] Resposta recebida:`, { status: res.status, ok: res.ok })
-      
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        console.log(`[DEBUG] Erro na resposta:`, err)
-        if (err?.error?.code === 'not_found') {
-          console.log(`[DEBUG] Nenhuma análise encontrada para etapa ${stageId}`)
-          setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
-          return
-        }
-        throw new Error(err?.error?.message || 'Erro ao buscar análise da IA')
-      }
-      const json = await res.json()
-      console.log(`[DEBUG] Análise mais recente carregada para etapa ${stageId}:`, json.item)
-      console.log(`[DEBUG] Dados da análise:`, {
-        id: json.item?.id,
-        run_id: json.item?.run_id,
-        result: json.item?.result,
-        score: json.item?.result?.score,
-        strengths: json.item?.result?.strengths,
-        weaknesses: json.item?.result?.weaknesses,
-        matched_requirements: json.item?.result?.matched_requirements,
-        missing_requirements: json.item?.result?.missing_requirements
-      })
-      
-      if (json.item) {
-        setAnalysisByStage((prev) => ({ ...prev, [stageId]: json.item }))
-        setAnalysisExpanded((prev) => ({ ...prev, [stageId]: true }))
-        // Selecionar automaticamente o candidato da análise
-        if (json.item.application_id) {
-          const candidate = applications.find(app => app.id === json.item.application_id)?.candidate_id
-          if (candidate) {
-            console.log(`[DEBUG] Selecionando candidato automaticamente: ${candidate}`)
-            setStageSelectedCandidates((prev) => ({ ...prev, [stageId]: candidate }))
+      try {
+        const res = await fetch(
+          `/api/stages/${stageId}/analysis?application_id=${encodeURIComponent(applicationId)}`,
+          { credentials: 'same-origin' },
+        )
+        const text = await res.text()
+        let json: any = null
+        try {
+          json = text ? JSON.parse(text) : null
+        } catch (parseError) {
+          if (!res.ok) {
+            throw new Error(text || res.statusText || 'Erro ao buscar análise da IA')
           }
         }
-      } else {
-        console.log(`[DEBUG] Nenhum item retornado para etapa ${stageId}`)
-        setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
+
+        if (!res.ok) {
+          if (json?.error?.code === 'not_found') {
+            setAnalysisByStage((prev) => {
+              const currentStage = prev[stageId] || {}
+              return {
+                ...prev,
+                [stageId]: {
+                  ...currentStage,
+                  [candidateId]: currentStage[candidateId] ?? null,
+                },
+              }
+            })
+            return
+          }
+          throw new Error(json?.error?.message || text || 'Erro ao buscar análise da IA')
+        }
+
+        const analysis = json?.item ?? null
+        setAnalysisByStage((prev) => ({
+          ...prev,
+          [stageId]: { ...(prev[stageId] || {}), [candidateId]: analysis },
+        }))
+      } catch (error: any) {
+        console.error('Erro ao carregar análise da etapa', error)
+        if (!options?.silent) {
+          notify({
+            title: 'Erro ao carregar análise',
+            description: error?.message || 'Não foi possível carregar o relatório da IA.',
+            variant: 'error',
+          })
+        }
+        setAnalysisByStage((prev) => ({
+          ...prev,
+          [stageId]: { ...(prev[stageId] || {}), [candidateId]: null },
+        }))
+      } finally {
+        setAnalysisLoading((prev) => ({
+          ...prev,
+          [stageId]: { ...(prev[stageId] || {}), [candidateId]: false },
+        }))
       }
-    } catch (error: any) {
-      console.error('Erro ao carregar análise mais recente da etapa', error)
-      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
-    } finally {
-      setAnalysisLoading((prev) => ({ ...prev, [stageId]: false }))
-    }
-  }, [applications])
+    },
+    [notify],
+  )
 
-  // Carregar automaticamente a análise mais recente para cada etapa
+  const evaluateCandidateInStage = useCallback(
+    async (stageId: string, candidateId: string, applicationId: string, applicationStageId: string) => {
+      setAnalysisEvaluating((prev) => ({
+        ...prev,
+        [stageId]: { ...(prev[stageId] || {}), [candidateId]: true },
+      }))
+
+      setAnalysisByStage((prev) => ({
+        ...prev,
+        [stageId]: {
+          ...(prev[stageId] || {}),
+          [candidateId]: {
+            run_id: `pending-${Date.now()}`,
+            status: 'running',
+            application_id: applicationId,
+            application_stage_id: applicationStageId,
+            stage_id: stageId,
+            created_at: new Date().toISOString(),
+          },
+        },
+      }))
+
+      try {
+        await api<{ run_id?: string }>(`/api/stages/${stageId}/evaluate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            application_id: applicationId,
+            application_stage_id: applicationStageId,
+            candidate_id: candidateId,
+          }),
+        })
+        notify({ title: 'Análise iniciada', description: 'A IA está processando o candidato selecionado.', variant: 'success' })
+
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        await loadCandidateAnalysis(stageId, candidateId, applicationId, { silent: true })
+      } catch (error: any) {
+        console.error('Erro ao iniciar análise da IA', error)
+        notify({
+          title: 'Erro ao iniciar análise',
+          description: error?.message || 'Não foi possível executar a análise da IA para este candidato.',
+          variant: 'error',
+        })
+      } finally {
+        setAnalysisEvaluating((prev) => ({
+          ...prev,
+          [stageId]: { ...(prev[stageId] || {}), [candidateId]: false },
+        }))
+      }
+    },
+    [loadCandidateAnalysis, notify],
+  )
+
+  const viewCandidateResume = useCallback(
+    async (stageId: string, candidateId: string, applicationId: string, candidateName?: string) => {
+      if (!applicationId) {
+        notify({
+          title: 'Currículo indisponível',
+          description: 'Não encontramos a aplicação deste candidato para localizar o currículo.',
+          variant: 'info',
+        })
+        return
+      }
+
+      setResumeViewing((prev) => ({
+        ...prev,
+        [stageId]: { ...(prev[stageId] || {}), [candidateId]: true },
+      }))
+
+      try {
+        const res = await fetch(`/api/applications/${applicationId}/resumes`, { credentials: 'same-origin' })
+        const json = await res.json().catch(() => null)
+        if (!res.ok) {
+          throw new Error(json?.error?.message || 'Não foi possível carregar os currículos deste candidato.')
+        }
+
+        const resumes = Array.isArray(json?.items) ? json.items : []
+        if (resumes.length === 0) {
+          notify({
+            title: 'Currículo não encontrado',
+            description: candidateName
+              ? `Nenhum currículo está anexado para ${candidateName}.`
+              : 'Nenhum currículo está anexado para este candidato.',
+            variant: 'info',
+          })
+          return
+        }
+
+        const resume = resumes.find((item: any) => item?.signed_url) ?? resumes[0]
+        if (resume?.signed_url) {
+          window.open(resume.signed_url, '_blank', 'noopener,noreferrer')
+          return
+        }
+
+        if (resume?.resume_path && resume?.resume_bucket) {
+          const url = `/api/candidates/resume?path=${encodeURIComponent(resume.resume_path)}&bucket=${encodeURIComponent(
+            resume.resume_bucket,
+          )}`
+          window.open(url, '_blank', 'noopener,noreferrer')
+          return
+        }
+
+        notify({
+          title: 'Currículo indisponível',
+          description: 'Não encontramos uma URL válida para abrir o currículo deste candidato.',
+          variant: 'info',
+        })
+      } catch (error: any) {
+        notify({
+          title: 'Erro ao abrir currículo',
+          description: error?.message || 'Não foi possível abrir o currículo do candidato.',
+          variant: 'error',
+        })
+      } finally {
+        setResumeViewing((prev) => ({
+          ...prev,
+          [stageId]: { ...(prev[stageId] || {}), [candidateId]: false },
+        }))
+      }
+    },
+    [notify],
+  )
+
   useEffect(() => {
-    console.log(`[DEBUG] useEffect auto-load: stages=${stages.length}, applications=${applications.length}`)
-    if (stages.length > 0 && applications.length > 0) {
-      console.log(`[DEBUG] Carregando análises automáticas para ${stages.length} etapas`)
-      stages.forEach((stage) => {
-        console.log(`[DEBUG] Carregando análise para etapa: ${stage.id} - ${stage.name}`)
-        loadLatestAnalysisForStage(stage.id)
+    if (!board?.lanes) return
+    Object.entries(board.lanes).forEach(([stageId, items]) => {
+      items.forEach((item) => {
+        const candidateId = item.candidate?.id
+        if (!candidateId || !item.application_id) return
+        const alreadyLoaded = analysisByStage[stageId]?.hasOwnProperty(candidateId)
+        if (!alreadyLoaded) {
+          loadCandidateAnalysis(stageId, candidateId, item.application_id, { silent: true })
+        }
       })
-    }
-  }, [stages, applications, loadLatestAnalysisForStage])
-
-  const handleStageCandidateSelection = useCallback((stageId: string, candidateId: string | null) => {
-    setStageSelectedCandidates((prev) => ({ ...prev, [stageId]: candidateId }))
-    if (!candidateId) {
-      setAnalysisByStage((prev) => ({ ...prev, [stageId]: null }))
-      setAnalysisExpanded((prev) => ({ ...prev, [stageId]: false }))
-      return
-    }
-    setAnalysisExpanded((prev) => ({ ...prev, [stageId]: prev[stageId] ?? true }))
-    loadAnalysisForStage(stageId, candidateId)
-  }, [loadAnalysisForStage])
+    })
+  }, [board, analysisByStage, loadCandidateAnalysis])
 
   useEffect(() => {
     setSelectedCandidateIds((prev) => prev.filter((id) => !applications.some((app) => app.candidate_id === id)))
@@ -492,9 +621,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
 
     if (firstStageId) {
       setActiveTab(firstStageId)
-      if (selectedCandidateIds[0]) {
-        setStageSelectedCandidates((prev) => ({ ...prev, [firstStageId]: selectedCandidateIds[0] }))
-      }
     }
 
     setSelectedCandidateIds([])
@@ -551,11 +677,16 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       setActiveMainTab('etapas')
       if (stageId) {
         setActiveTab(stageId)
-        setStageSelectedCandidates((prev) => ({ ...prev, [stageId]: candidateId }))
         const url = new URL(window.location.href)
         url.searchParams.set('stageId', stageId)
         url.searchParams.set('candidateId', candidateId)
         window.history.replaceState({}, '', url.toString())
+        requestAnimationFrame(() => {
+          const card = document.getElementById(`stage-${stageId}-candidate-${candidateId}`)
+          if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }
+        })
       }
     },
     [],
@@ -573,9 +704,15 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       <div className="bg-white border-b border-gray-200 shadow-sm -mx-4 md:-mx-8 px-4 md:px-8 mb-8">
         <div className="flex w-full flex-col gap-4 py-6 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-sm text-gray-500">Vagas / Processo seletivo</div>
-            <h1 className="mt-2 text-2xl font-semibold text-gray-900">Processo Seletivo</h1>
-            <p className="text-sm text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
+            <div className="text-sm text-gray-500">
+              Vagas / {jobInfo?.title ?? 'Processo Seletivo'}
+            </div>
+            <h1 className="mt-2 text-2xl font-semibold text-gray-900">
+              {jobInfo?.title ?? 'Processo Seletivo'}
+            </h1>
+            <p className="text-sm text-gray-600">
+              Gerencie as etapas do processo seletivo e analise candidatos desta vaga
+            </p>
           </div>
           {jobId && (
             <button
@@ -968,14 +1105,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                           selectedMap={selectedForBulk}
                           setSelectedMap={setSelectedForBulk}
                           onSelect={(it) => {
-                            setCurrentItem({
-                              application_id: it.application_id,
-                              application_stage_id: it.application_stage_id,
-                              candidate: { id: it.candidate.id, name: it.candidate.name },
-                            })
-                            const url = new URL(window.location.href)
-                            url.searchParams.set('candidateId', it.candidate.id)
-                            window.history.replaceState({}, '', url.toString())
+                            const targetStageId = it.stage_id ?? activeTab ?? orderedStages[0]?.id ?? null
+                            handleNavigateToStage(targetStageId, it.candidate.id)
                           }}
                         />
                       </div>
@@ -988,61 +1119,472 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-gray-900 mb-6">Análises de Candidatos</h2>
               <div className="space-y-6">
-                {stages.map((s) => (
-                  <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
-                          <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 mt-1">
-                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
-                              Threshold: {s.threshold}
-                            </span>
-                            <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
-                              Peso: {s.stage_weight}
-                            </span>
+                {stages.map((stage) => {
+                  const laneItems = (board?.lanes?.[stage.id] || []) as any[]
+                  const stageAnalysisMap = analysisByStage[stage.id] || {}
+                  const stageLoadingMap = analysisLoading[stage.id] || {}
+                  const stageEvaluatingMap = analysisEvaluating[stage.id] || {}
+                  const stageResumeViewingMap = resumeViewing[stage.id] || {}
+
+                  return (
+                    <div key={stage.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                      <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900">{stage.name}</h3>
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 mt-2">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-1 font-medium text-blue-700">
+                                Threshold: {stage.threshold}
+                              </span>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-1 font-medium text-green-700">
+                                Peso: {stage.stage_weight}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-sm font-medium text-gray-500">
+                            {laneItems.length} {laneItems.length === 1 ? 'candidato' : 'candidatos'} na etapa
                           </div>
                         </div>
                       </div>
+
+                      <div className="p-6 space-y-4">
+                        {laneItems.length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-gray-600">
+                            Nenhum candidato nesta etapa no momento.
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {laneItems.map((item) => {
+                              const candidate = item.candidate || {}
+                              const candidateId = candidate.id
+                              if (!candidateId) return null
+
+                              const candidateAnalysis = stageAnalysisMap[candidateId] ?? null
+                              const loading = Boolean(stageLoadingMap[candidateId])
+                              const evaluating = Boolean(stageEvaluatingMap[candidateId])
+                              const viewingResume = Boolean(stageResumeViewingMap[candidateId])
+
+                              return (
+                                <CandidateAnalysisCard
+                                  key={item.application_stage_id}
+                                  stage={stage}
+                                  item={item}
+                                  candidate={candidate}
+                                  analysis={candidateAnalysis}
+                                  loading={loading}
+                                  evaluating={evaluating}
+                                  viewingResume={viewingResume}
+                                  onViewResume={() =>
+                                    viewCandidateResume(stage.id, candidateId, item.application_id, candidate.name)
+                                  }
+                                  onRefresh={() => loadCandidateAnalysis(stage.id, candidateId, item.application_id)}
+                                  onEvaluate={() =>
+                                    evaluateCandidateInStage(
+                                      stage.id,
+                                      candidateId,
+                                      item.application_id,
+                                      item.application_stage_id,
+                                    )
+                                  }
+                                />
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
-
-                    <div className="p-6">
-                      {(() => {
-                        const candidateName = stageSelectedCandidates[s.id]
-                          ? candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null
-                          : null
-                        const analysis = analysisByStage[s.id] || null
-                        const loading = Boolean(analysisLoading[s.id])
-
-                        console.log(`[DEBUG] Renderizando análise para etapa ${s.id}:`, {
-                          candidateName,
-                          analysis,
-                          loading,
-                          analysisResult: analysis?.result,
-                        })
-
-                        return (
-                          <StageAnalysisPanel
-                            candidateName={candidateName}
-                            analysis={analysis}
-                            loading={loading}
-                            expanded={true}
-                            onToggle={() => {}}
-                            onRefresh={() => {
-                              const candidateId = stageSelectedCandidates[s.id] ?? null
-                              if (candidateId) loadAnalysisForStage(s.id, candidateId)
-                            }}
-                          />
-                        )
-                      })()}
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+type CandidateAnalysisCardProps = {
+  stage: Stage
+  item: { application_id: string; application_stage_id: string; score: number | null }
+  candidate: { id: string; name?: string; email?: string }
+  analysis: StageAnalysisResult | null
+  loading: boolean
+  evaluating: boolean
+  viewingResume: boolean
+  onViewResume: () => void
+  onRefresh: () => void
+  onEvaluate: () => void
+}
+
+function TranscriptModal({ 
+  isOpen, 
+  onClose, 
+  onConfirm, 
+  loading 
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  onConfirm: (file: File) => void; 
+  loading: boolean 
+}) {
+  const [file, setFile] = useState<File | null>(null);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <h3 className="mb-4 text-lg font-semibold text-gray-900">Adicionar Transcrição</h3>
+        <p className="mb-4 text-sm text-gray-600">
+          Faça upload de um arquivo de texto (.txt) ou JSON (.json) contendo a transcrição da entrevista.
+        </p>
+        
+        <input
+          type="file"
+          accept=".txt,.json,.pdf,.doc,.docx,text/plain,application/json,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          className="mb-6 block w-full rounded-lg border border-gray-300 p-2 text-sm text-gray-700 file:mr-4 file:rounded-full file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
+        />
+
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => file && onConfirm(file)}
+            disabled={!file || loading}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {loading ? 'Enviando...' : 'Analisar com Transcrição'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CandidateAnalysisCard({
+  stage,
+  item,
+  candidate,
+  analysis,
+  loading,
+  evaluating,
+  viewingResume,
+  onViewResume,
+  onRefresh,
+  onEvaluate,
+}: CandidateAnalysisCardProps) {
+  const [expanded, setExpanded] = useState(false)
+  const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false)
+  const [isUploadingTranscript, setIsUploadingTranscript] = useState(false)
+  const { notify } = useToast()
+
+  const handleTranscriptUpload = async (file: File) => {
+    setIsUploadingTranscript(true)
+    try {
+      // 1. Obter URL de upload
+      let contentType = file.type
+      if (!contentType) {
+        if (file.name.endsWith('.json')) contentType = 'application/json'
+        else if (file.name.endsWith('.pdf')) contentType = 'application/pdf'
+        else if (file.name.endsWith('.docx')) contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        else if (file.name.endsWith('.doc')) contentType = 'application/msword'
+        else contentType = 'text/plain'
+      }
+      
+      const uploadRes = await fetch('/api/uploads/transcript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, content_type: contentType }),
+      })
+      
+      if (!uploadRes.ok) throw new Error('Erro ao obter URL de upload')
+      const { upload_url, path, bucket } = await uploadRes.json()
+
+      // 2. Fazer upload do arquivo
+      const fileRes = await fetch(upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType },
+        body: file,
+      })
+      
+      if (!fileRes.ok) throw new Error('Erro ao fazer upload do arquivo')
+
+      // 3. Disparar avaliação com transcrição
+      // Precisamos chamar o endpoint de evaluate passando transcript_path
+      const evaluateRes = await fetch(`/api/stages/${stage.id}/evaluate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          application_id: item.application_id,
+          application_stage_id: item.application_stage_id,
+          candidate_id: candidate.id,
+          transcript_path: path,
+          transcript_bucket: bucket,
+        }),
+      })
+
+      if (!evaluateRes.ok) throw new Error('Erro ao iniciar análise da transcrição')
+      
+      notify({ title: 'Sucesso', description: 'Transcrição enviada para análise!', variant: 'success' })
+      setIsTranscriptModalOpen(false)
+      onRefresh() // Atualizar estado para mostrar "Em análise" (ou polling seria ideal)
+      setExpanded(true) // Expandir para ver o status
+      
+    } catch (error: any) {
+      console.error(error)
+      notify({ title: 'Erro', description: error.message || 'Falha ao processar transcrição', variant: 'error' })
+    } finally {
+      setIsUploadingTranscript(false)
+    }
+  }
+
+  const candidateName = candidate.name || 'Candidato sem nome'
+  const candidateEmail = candidate.email
+  const initials = (candidate.name || candidate.id || '??').slice(0, 2).toUpperCase()
+  const status = analysis?.status ?? null
+  const statusInfo = status ? analysisStatusStyles[status] : null
+  const updatedAt = analysis?.created_at ? new Date(analysis.created_at).toLocaleString('pt-BR') : null
+  const stageScore = typeof item.score === 'number' ? item.score.toFixed(1) : '—'
+  const aiScore =
+    typeof analysis?.result?.score === 'number' ? `${Number(analysis.result.score).toFixed(1)} / 10` : 'Sem avaliação'
+  const isProcessing = evaluating || status === 'running' || status === 'pending'
+  const hasAnalysis = Boolean(analysis)
+
+  const toggleDetails = () => setExpanded((prev) => !prev)
+
+  const SummaryCard = ({
+    label,
+    value,
+    helper,
+  }: {
+    label: string
+    value: string
+    helper?: string
+  }) => (
+    <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-gray-900">{value}</p>
+      {helper && <p className="text-xs text-gray-500">{helper}</p>}
+    </div>
+  )
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm" id={`stage-${stage.id}-candidate-${candidate.id}`}>
+      <div className="flex flex-col gap-4 border-b border-gray-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 text-base font-semibold text-green-700">
+            {initials}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-900">{candidateName}</p>
+            {candidateEmail && <p className="text-xs text-gray-500">{candidateEmail}</p>}
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              {statusInfo ? (
+                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium ${statusInfo.className}`}>
+                  {statusInfo.label}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-1 font-medium text-gray-600">
+                  Sem análise
+                </span>
+              )}
+              {updatedAt && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-1 font-medium text-gray-600">
+                  Atualizado em {updatedAt}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onViewResume}
+            disabled={viewingResume}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {viewingResume ? 'Abrindo...' : 'Ver currículo'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setExpanded(true)
+              onRefresh()
+            }}
+            disabled={loading || evaluating}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? 'Atualizando...' : 'Atualizar análise'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setExpanded(true)
+              onEvaluate()
+            }}
+            disabled={evaluating}
+            className="inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {evaluating ? 'Analisando...' : 'Analisar com IA'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsTranscriptModalOpen(true)}
+            disabled={evaluating}
+            className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Adicionar transcrição
+          </button>
+          <button
+            type="button"
+            onClick={toggleDetails}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-50"
+          >
+            {expanded ? 'Ocultar detalhes' : 'Ver detalhes'}
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-4 px-5 py-4">
+        <div className="grid gap-4 md:grid-cols-3">
+          <SummaryCard label="Etapa" value={stage.name} helper={`Threshold: ${stage.threshold}`} />
+          <SummaryCard label="Score da etapa" value={stageScore} helper="Resultado da movimentação" />
+          <SummaryCard label="Pontuação IA" value={aiScore} helper={updatedAt ? 'Última análise registrada' : 'Sem execuções'} />
+        </div>
+
+        {(expanded || isProcessing || loading || hasAnalysis) && (
+          <div className="space-y-4">
+            {isProcessing && (
+              <div className="rounded-lg border border-dashed border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+                A análise está em processamento. Aguarde alguns instantes.
+              </div>
+            )}
+
+            {loading && !isProcessing && (
+              <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600">
+                Carregando análise do candidato...
+              </div>
+            )}
+
+            {!loading && !isProcessing && !analysis && (
+              <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600">
+                Nenhuma análise disponível. Clique em &quot;Analisar com IA&quot; para gerar o primeiro relatório.
+              </div>
+            )}
+
+            {!loading && analysis && (
+              <>
+                {typeof analysis.result?.score === 'number' && (
+                  <div className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Pontuação da IA</p>
+                    <p className="mt-1 text-3xl font-bold text-blue-900">
+                      {Number(analysis.result.score).toFixed(1)}
+                      <span className="ml-1 text-sm font-semibold text-blue-600">/ 10</span>
+                    </p>
+                  </div>
+                )}
+
+                {analysis.result?.analysis && (
+                  <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <span className="block text-sm font-semibold text-gray-900 mb-2">Resumo da IA</span>
+                    <p className="text-sm text-gray-700 whitespace-pre-line">{analysis.result.analysis}</p>
+                  </div>
+                )}
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  {renderAnalysisList(
+                    'Pontos fortes',
+                    analysis.result?.strengths,
+                    'Nenhum ponto forte identificado.',
+                    'positive',
+                  )}
+                  {renderAnalysisList(
+                    'Oportunidades de melhoria',
+                    analysis.result?.weaknesses,
+                    'Nenhum ponto de atenção identificado.',
+                    'negative',
+                  )}
+                </div>
+
+                {analysis.result?.matched_requirements && analysis.result.matched_requirements.length > 0 && (
+                  <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <span className="block text-sm font-semibold text-gray-900 mb-2">Requisitos atendidos</span>
+                    <ul className="space-y-1 text-sm text-gray-700">
+                      {analysis.result.matched_requirements.map((req, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="mt-0.5 text-emerald-600">•</span>
+                          <span>{req}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {analysis.result?.missing_requirements && analysis.result.missing_requirements.length > 0 && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                    <span className="block text-sm font-semibold mb-2">Requisitos pendentes</span>
+                    <ul className="space-y-1">
+                      {analysis.result.missing_requirements.map((req, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="mt-0.5 text-amber-600">•</span>
+                          <span>{req}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {analysis.result?.recommendations && analysis.result.recommendations.length > 0 && (
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
+                    <span className="block text-sm font-semibold mb-2">Recomendações da IA</span>
+                    <ul className="space-y-2">
+                      {analysis.result.recommendations.map((rec, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="mt-0.5 text-emerald-600">💡</span>
+                          <span>{rec}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {analysis.result?.extraction_warnings && analysis.result.extraction_warnings.length > 0 && (
+                  <div className="rounded-xl border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800">
+                    <span className="block text-sm font-semibold mb-2">Avisos de extração</span>
+                    <ul className="space-y-1">
+                      {analysis.result.extraction_warnings.map((warning, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="mt-0.5 text-yellow-600">⚠️</span>
+                          <span>{warning}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {analysis.status === 'failed' && (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                    A última execução da IA falhou. Tente novamente ou revise os dados fornecidos para esta etapa.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      <TranscriptModal
+        isOpen={isTranscriptModalOpen}
+        onClose={() => setIsTranscriptModalOpen(false)}
+        onConfirm={handleTranscriptUpload}
+        loading={isUploadingTranscript}
+      />
     </div>
   )
 }
