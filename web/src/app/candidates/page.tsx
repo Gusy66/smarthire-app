@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useToast } from '@/components/ToastProvider'
+import CandidateDetailModal from '@/components/CandidateDetailModal'
 
 const REQUIRED_IMPORT_HEADERS = [
   'nome',
@@ -109,6 +110,10 @@ export default function CandidatesPage() {
   const [importLoading, setImportLoading] = useState(false)
   const [importProgress, setImportProgress] = useState<{ status: string; message: string } | null>(null)
   const [isUploadResumeModalOpen, setIsUploadResumeModalOpen] = useState(false)
+  const [isAssignJobModalOpen, setIsAssignJobModalOpen] = useState(false)
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
+  const [assigningJob, setAssigningJob] = useState(false)
+  const [selectedJobForAssign, setSelectedJobForAssign] = useState<string>('')
 
   async function load() {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
@@ -147,7 +152,7 @@ export default function CandidatesPage() {
   ): Promise<{ path: string; bucket: string } | null> {
     const manageState = options?.manageState ?? true
     if (manageState) {
-      setUploadingResume(true)
+    setUploadingResume(true)
     }
     try {
       const maxSize = 10 * 1024 * 1024
@@ -190,7 +195,7 @@ export default function CandidatesPage() {
       return null
     } finally {
       if (manageState) {
-        setUploadingResume(false)
+      setUploadingResume(false)
       }
     }
   }
@@ -417,91 +422,130 @@ export default function CandidatesPage() {
     }
   }
 
+  async function handleAssignCandidateToJob(candidateId: string, jobId: string) {
+    if (!jobId) {
+      notify({ title: 'Erro', description: 'Selecione uma vaga', variant: 'error' })
+      return
+    }
+
+    setAssigningJob(true)
+    try {
+      const res = await fetch('/api/applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ candidate_id: candidateId, job_id: jobId }),
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        let message = 'Erro ao atribuir candidato à vaga'
+        try {
+          const data = text ? JSON.parse(text) : null
+          message = data?.error?.message || message
+        } catch {}
+        notify({ title: 'Erro', description: message, variant: 'error' })
+        return
+      }
+
+      notify({ title: 'Candidato atribuído com sucesso!', description: 'O candidato foi direcionado para a primeira etapa da vaga.', variant: 'success' })
+      setIsAssignJobModalOpen(false)
+      setSelected(null)
+      setSelectedJobForAssign('')
+      
+      // Redirecionar para a vaga
+      window.location.href = `/jobs/${jobId}/stages`
+    } catch (error) {
+      notify({ title: 'Erro ao atribuir candidato', description: error instanceof Error ? error.message : 'Erro desconhecido', variant: 'error' })
+    } finally {
+      setAssigningJob(false)
+    }
+  }
+
   const avgScoreToPct = (v?: number | null) => v == null ? null : Math.round((Number(v) || 0) * 100) / 100
 
   return (
     <div className="space-y-0">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 shadow-sm -mx-4 md:-mx-8 px-4 md:px-8 mb-8">
-        <div className="flex w-full flex-col gap-4 py-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="text-sm text-gray-500">Dashboard / Candidatos</div>
-            <h1 className="mt-2 text-2xl font-semibold text-gray-900">Gerenciar Candidatos</h1>
-            <p className="text-sm text-gray-600">Acompanhe e gerencie todos os candidatos em seu pipeline</p>
+      <div className="bg-white border-b border-gray-200 shadow-sm -mx-3 sm:-mx-4 md:-mx-8 px-3 sm:px-4 md:px-8 mb-4 sm:mb-6 md:mb-8">
+        <div className="flex w-full flex-col gap-3 sm:gap-4 py-4 sm:py-6 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <div className="text-xs sm:text-sm text-gray-500">Dashboard / Candidatos</div>
+            <h1 className="mt-1 sm:mt-2 text-lg sm:text-xl md:text-2xl font-semibold text-gray-900">Gerenciar Candidatos</h1>
+            <p className="text-xs sm:text-sm text-gray-600 hidden sm:block">Acompanhe e gerencie todos os candidatos em seu pipeline</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <button 
               onClick={() => setIsImportCandidatesModalOpen(true)}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="rounded-lg border border-gray-300 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
-              📥 Importar Candidatos
+              <span className="hidden sm:inline">📥 </span>Importar
             </button>
-            <button className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            <button className="rounded-lg border border-gray-300 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50">
               Exportar
             </button>
-            <button onClick={() => setIsCreateCandidateModalOpen(true)} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700">
-              + Criar Candidato
+            <button onClick={() => setIsCreateCandidateModalOpen(true)} className="rounded-lg bg-green-600 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700">
+              + <span className="hidden sm:inline">Criar </span>Candidato
             </button>
           </div>
         </div>
       </div>
 
       {/* Metrics */}
-      <div className="space-y-6">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <div className="rounded-lg border border-gray-200 bg-white p-5">
-            <div className="text-sm text-gray-600">Total</div>
-            <div className="mt-2 text-3xl font-semibold text-gray-900">{total}</div>
-            <div className="mt-1 text-xs text-gray-500">candidatos</div>
+      <div className="space-y-4 sm:space-y-6">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+          <div className="rounded-lg border border-gray-200 bg-white p-3 sm:p-5">
+            <div className="text-xs sm:text-sm text-gray-600">Total</div>
+            <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-semibold text-gray-900">{total}</div>
+            <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-gray-500">candidatos</div>
           </div>
-          <div className="rounded-lg border border-gray-200 bg-white p-5">
-            <div className="text-sm text-gray-600">Novos</div>
-            <div className="mt-2 text-3xl font-semibold text-gray-900">—</div>
-            <div className="mt-1 text-xs text-gray-500">aguardando triagem</div>
+          <div className="rounded-lg border border-gray-200 bg-white p-3 sm:p-5">
+            <div className="text-xs sm:text-sm text-gray-600">Novos</div>
+            <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-semibold text-gray-900">—</div>
+            <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-gray-500">triagem</div>
           </div>
-          <div className="rounded-lg border border-gray-200 bg-white p-5">
-            <div className="text-sm text-gray-600">Em Processo</div>
-            <div className="mt-2 text-3xl font-semibold text-gray-900">—</div>
-            <div className="mt-1 text-xs text-gray-500">em diferentes etapas</div>
+          <div className="rounded-lg border border-gray-200 bg-white p-3 sm:p-5">
+            <div className="text-xs sm:text-sm text-gray-600">Em Processo</div>
+            <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-semibold text-gray-900">—</div>
+            <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-gray-500">etapas</div>
           </div>
-          <div className="rounded-lg border border-gray-200 bg-white p-5">
-            <div className="text-sm text-gray-600">Score Médio</div>
-            <div className="mt-2 text-3xl font-semibold text-gray-900">—</div>
-            <div className="mt-1 text-xs text-gray-500">compatibilidade IA</div>
+          <div className="rounded-lg border border-gray-200 bg-white p-3 sm:p-5">
+            <div className="text-xs sm:text-sm text-gray-600">Score Médio</div>
+            <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-semibold text-gray-900">—</div>
+            <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-gray-500">IA</div>
           </div>
         </div>
 
         {/* Filtros */}
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
           <input 
             value={search} 
             onChange={(e)=>setSearch(e.target.value)} 
             placeholder="Buscar candidatos..." 
-            className="border rounded px-3 py-2 w-full max-w-2xl" 
+            className="border rounded px-3 py-2 text-sm w-full sm:max-w-2xl" 
           />
-          <button onClick={()=>{ setPage(1); load() }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+          <button onClick={()=>{ setPage(1); load() }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 w-full sm:w-auto">
             Buscar
           </button>
         </div>
 
         {/* Tabela */}
         <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-          <div className="px-8 py-6 border-b">
-            <h2 className="text-lg font-semibold text-gray-900">Lista de Candidatos</h2>
-            <div className="text-xs text-gray-500 mt-1">{candidates.length} candidato(s) encontrado(s)</div>
+          <div className="px-4 sm:px-6 md:px-8 py-4 sm:py-6 border-b">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Lista de Candidatos</h2>
+            <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1">{candidates.length} candidato(s) encontrado(s)</div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-xs sm:text-sm min-w-[700px]">
               <thead className="text-left text-gray-600 bg-gray-50 border-b">
                 <tr>
-                  <th className="py-3 px-5 font-medium">Candidato</th>
-                  <th className="py-3 px-5 font-medium">Vaga</th>
-                  <th className="py-3 px-5 font-medium">Etapa</th>
-                  <th className="py-3 px-5 font-medium">Status</th>
-                  <th className="py-3 px-5 font-medium">Score IA</th>
-                  <th className="py-3 px-5 font-medium">Aplicado em</th>
-                  <th className="py-3 px-5 font-medium">Currículo</th>
-                  <th className="py-3 px-5 text-right font-medium">Ações</th>
+                  <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium">Candidato</th>
+                  <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium hidden md:table-cell">Vaga</th>
+                  <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium hidden lg:table-cell">Etapa</th>
+                  <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium">Score</th>
+                  <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium hidden sm:table-cell">Data</th>
+                  <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium">CV</th>
+                  <th className="py-2.5 sm:py-3 px-3 sm:px-5 text-right font-medium">Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -510,41 +554,38 @@ export default function CandidatesPage() {
                   const appliedAt = c.created_at ? new Date(c.created_at) : null
                   return (
                     <tr key={c.id} className="border-b hover:bg-gray-50 transition-colors">
-                      <td className="py-4 px-5">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold text-sm">
+                      <td className="py-3 sm:py-4 px-3 sm:px-5">
+                        <div className="flex items-center gap-2 sm:gap-3">
+                          <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold text-xs sm:text-sm flex-shrink-0">
                             {(c.name||c.id).slice(0,2).toUpperCase()}
                           </div>
-                          <div>
-                            <div className="font-medium text-gray-900">{c.name}</div>
-                            <div className="text-xs text-gray-600">{c.email}</div>
+                          <div className="min-w-0">
+                            <div className="font-medium text-gray-900 text-xs sm:text-sm truncate max-w-[120px] sm:max-w-none">{c.name}</div>
+                            <div className="text-[10px] sm:text-xs text-gray-600 truncate max-w-[120px] sm:max-w-none">{c.email}</div>
                           </div>
                         </div>
                       </td>
-                      <td className="py-4 px-5 text-gray-700">{c.latest_job_title ?? '—'}</td>
-                      <td className="py-4 px-5 text-gray-700">{c.latest_stage_name ?? '—'}</td>
-                      <td className="py-4 px-5">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          —
-                        </span>
+                      <td className="py-3 sm:py-4 px-3 sm:px-5 text-gray-700 hidden md:table-cell">
+                        <span className="truncate block max-w-[150px]">{c.latest_job_title ?? '—'}</span>
                       </td>
-                      <td className="py-4 px-5">
+                      <td className="py-3 sm:py-4 px-3 sm:px-5 text-gray-700 hidden lg:table-cell">{c.latest_stage_name ?? '—'}</td>
+                      <td className="py-3 sm:py-4 px-3 sm:px-5">
                         {score == null ? '—' : (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                          <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-green-100 text-green-800">
                             {Math.round(score)}%
                           </span>
                         )}
                       </td>
-                      <td className="py-4 px-5 text-gray-700">{appliedAt ? appliedAt.toLocaleDateString('pt-BR') : '—'}</td>
-                      <td className="py-4 px-5 text-gray-700">
-                        <div className="flex items-center gap-3">
+                      <td className="py-3 sm:py-4 px-3 sm:px-5 text-gray-700 hidden sm:table-cell text-xs">{appliedAt ? appliedAt.toLocaleDateString('pt-BR') : '—'}</td>
+                      <td className="py-3 sm:py-4 px-3 sm:px-5 text-gray-700">
+                        <div className="flex items-center gap-1.5 sm:gap-3">
                           {c.resume_path ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">
-                              Sim
+                            <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-green-100 text-green-800">
+                              ✓
                             </span>
                           ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800">
-                              Não
+                            <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-red-100 text-red-800">
+                              ✗
                             </span>
                           )}
                           <button
@@ -554,35 +595,52 @@ export default function CandidatesPage() {
                               setIsUploadResumeModalOpen(true)
                             }}
                             disabled={uploadingResume}
-                            className="rounded-md border border-blue-200 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                            className="hidden sm:inline-block rounded-md border border-blue-200 px-2 sm:px-3 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
                           >
-                            {c.resume_path ? 'Atualizar PDF' : 'Anexar PDF'}
+                            {c.resume_path ? 'Atualizar' : 'Anexar'}
                           </button>
                         </div>
                       </td>
-                      <td className="py-4 px-5 text-right">
-                        <button 
-                          onClick={()=>setSelected(c)}
-                          className="text-gray-400 hover:text-gray-600 transition-colors"
-                          title="Visualizar"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-                            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
-                            <circle cx="12" cy="12" r="3" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => { setSelected(c); setIsDeleteCandidateModalOpen(true) }}
-                          className="ml-2 text-red-400 hover:text-red-600 transition-colors"
-                          title="Deletar"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-                            <polyline points="3 6 5 6 21 6"></polyline>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                            <line x1="10" y1="11" x2="10" y2="17"></line>
-                            <line x1="14" y1="11" x2="14" y2="17"></line>
-                          </svg>
-                        </button>
+                      <td className="py-3 sm:py-4 px-3 sm:px-5 text-right">
+                        <div className="flex items-center justify-end gap-1 sm:gap-2">
+                          <button 
+                            onClick={() => {
+                              setSelected(c)
+                              setIsAssignJobModalOpen(true)
+                            }}
+                            className="text-blue-400 hover:text-blue-600 transition-colors p-1"
+                            title="Atribuir à Vaga"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 sm:w-5 sm:h-5">
+                              <path d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                            </svg>
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setSelected(c)
+                              setIsDetailModalOpen(true)
+                            }}
+                            className="text-gray-400 hover:text-gray-600 transition-colors p-1"
+                            title="Visualizar"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 sm:w-5 sm:h-5">
+                              <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+                              <circle cx="12" cy="12" r="3" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => { setSelected(c); setIsDeleteCandidateModalOpen(true) }}
+                            className="text-red-400 hover:text-red-600 transition-colors p-1"
+                            title="Deletar"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 sm:w-5 sm:h-5">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                              <line x1="10" y1="11" x2="10" y2="17"></line>
+                              <line x1="14" y1="11" x2="14" y2="17"></line>
+                            </svg>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -593,28 +651,28 @@ export default function CandidatesPage() {
         </div>
 
         {/* Paginação */}
-        <div className="flex items-center gap-3">
-          <button disabled={page<=1} onClick={()=>setPage((p)=>Math.max(1, p-1))} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-            Anterior
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3">
+          <button disabled={page<=1} onClick={()=>setPage((p)=>Math.max(1, p-1))} className="rounded-lg border border-gray-300 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 w-full sm:w-auto">
+            ← Anterior
           </button>
-          <span className="text-sm text-gray-700">Página {page} de {Math.max(1, Math.ceil(total / pageSize))}</span>
-          <button disabled={page>=Math.ceil(total / pageSize)} onClick={()=>setPage((p)=>p+1)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-            Próxima
+          <span className="text-xs sm:text-sm text-gray-700 order-first sm:order-none">Página {page} de {Math.max(1, Math.ceil(total / pageSize))}</span>
+          <button disabled={page>=Math.ceil(total / pageSize)} onClick={()=>setPage((p)=>p+1)} className="rounded-lg border border-gray-300 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 w-full sm:w-auto">
+            Próxima →
           </button>
         </div>
       </div>
 
       {/* Modal de Importação */}
       {isImportCandidatesModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="relative w-full max-w-md rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <h2 className="text-lg font-semibold text-gray-900">Importar Candidatos</h2>
-              <button onClick={() => setIsImportCandidatesModalOpen(false)} className="text-gray-500 hover:text-gray-800" aria-label="Fechar">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-2 sm:px-4">
+          <div className="relative w-full max-w-md rounded-xl sm:rounded-2xl bg-white shadow-xl max-h-[95vh] sm:max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4 flex-shrink-0">
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900">Importar Candidatos</h2>
+              <button onClick={() => setIsImportCandidatesModalOpen(false)} className="text-gray-500 hover:text-gray-800 p-1" aria-label="Fechar">
                 ✕
               </button>
             </div>
-            <div className="px-6 py-6 space-y-4">
+            <div className="px-4 sm:px-6 py-4 sm:py-6 space-y-4 overflow-y-auto flex-1">
               <div>
                 <h3 className="text-sm font-medium text-gray-900 mb-2">📄 Baixar Template</h3>
                 <p className="text-xs text-gray-600 mb-3">Clique no botão abaixo para baixar a planilha template com as colunas corretas:</p>
@@ -703,7 +761,7 @@ export default function CandidatesPage() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
+            <div className="flex items-center justify-end gap-2 sm:gap-3 border-t border-gray-200 px-4 sm:px-6 py-3 sm:py-4 flex-shrink-0">
               <button
                 onClick={() => {
                   setIsImportCandidatesModalOpen(false)
@@ -711,16 +769,16 @@ export default function CandidatesPage() {
                   setImportProgress(null)
                 }}
                 disabled={importLoading}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="rounded-lg border border-gray-300 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 Fechar
               </button>
               <button
                 onClick={handleImportCandidates}
                 disabled={!importFile || importLoading}
-                className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="rounded-lg bg-green-600 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {importLoading ? '⏳ Importando...' : '📤 Importar Candidatos'}
+                {importLoading ? '⏳ Importando...' : '📤 Importar'}
               </button>
             </div>
           </div>
@@ -729,27 +787,27 @@ export default function CandidatesPage() {
 
       {/* Modal Upload Currículo */}
       {isUploadResumeModalOpen && selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="relative w-full max-w-md rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <h2 className="text-lg font-semibold text-gray-900">Anexar Currículo</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-2 sm:px-4">
+          <div className="relative w-full max-w-md rounded-xl sm:rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4">
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900">Anexar Currículo</h2>
               <button 
                 onClick={() => { 
                   setIsUploadResumeModalOpen(false)
                   setSelected(null)
                 }} 
-                className="text-gray-500 hover:text-gray-800" 
+                className="text-gray-500 hover:text-gray-800 p-1" 
                 aria-label="Fechar"
               >
                 ✕
               </button>
             </div>
-            <div className="px-6 py-6 space-y-4">
+            <div className="px-4 sm:px-6 py-4 sm:py-6 space-y-4">
               <div>
-                <p className="text-sm text-gray-600 mb-4">
+                <p className="text-xs sm:text-sm text-gray-600 mb-3 sm:mb-4">
                   Anexar currículo para <strong>{selected.name}</strong>
                 </p>
-                <div className="rounded-lg border-2 border-dashed border-gray-300 p-6 text-center">
+                <div className="rounded-lg border-2 border-dashed border-gray-300 p-4 sm:p-6 text-center">
                   <input
                     type="file"
                     accept=".pdf"
@@ -764,21 +822,21 @@ export default function CandidatesPage() {
                     id="resume-file-input"
                   />
                   <label htmlFor="resume-file-input" className="cursor-pointer block">
-                    <div className="text-3xl mb-2">📄</div>
-                    <div className="text-sm font-medium text-gray-900">Clique para selecionar arquivo</div>
-                    <div className="text-xs text-gray-500 mt-1">Apenas PDF (máx. 10 MB)</div>
+                    <div className="text-2xl sm:text-3xl mb-2">📄</div>
+                    <div className="text-xs sm:text-sm font-medium text-gray-900">Clique para selecionar</div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1">PDF (máx. 10 MB)</div>
                   </label>
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
+            <div className="flex items-center justify-end gap-2 sm:gap-3 border-t border-gray-200 px-4 sm:px-6 py-3 sm:py-4">
               <button
                 onClick={() => {
                   setIsUploadResumeModalOpen(false)
                   setSelected(null)
                 }}
                 disabled={uploadingResume}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="rounded-lg border border-gray-300 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 Cancelar
               </button>
@@ -787,81 +845,48 @@ export default function CandidatesPage() {
         </div>
       )}
 
-      {/* Modal Detalhes */}
-      {selected && !isUploadResumeModalOpen && !isDeleteCandidateModalOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <h2 className="text-lg font-semibold text-gray-900">{selected.name}</h2>
-              <button onClick={() => setSelected(null)} className="text-gray-500 hover:text-gray-800" aria-label="Fechar">
-                ✕
-              </button>
-            </div>
-            <div className="px-6 py-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-sm font-medium text-gray-700">Email</div>
-                  <div className="text-sm text-gray-900 mt-1">{selected.email || '—'}</div>
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-gray-700">Telefone</div>
-                  <div className="text-sm text-gray-900 mt-1">{selected.phone || '—'}</div>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-sm font-medium text-gray-700">Vaga</div>
-                  <div className="text-sm text-gray-900 mt-1">{selected.latest_job_title || '—'}</div>
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-gray-700">Etapa</div>
-                  <div className="text-sm text-gray-900 mt-1">{selected.latest_stage_name || '—'}</div>
-                </div>
-              </div>
-              {selected.avg_score !== null && (
-                <div>
-                  <div className="text-sm font-medium text-gray-700">Score IA</div>
-                  <div className="text-sm text-gray-900 mt-1">{Math.round((selected.avg_score || 0) * 100) / 100}%</div>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-3 border-t border-gray-200 px-6 py-4">
-              <button onClick={() => setSelected(null)} className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Modal Detalhes Fullscreen */}
+      {isDetailModalOpen && selected && (
+        <CandidateDetailModal
+          candidateId={selected.id}
+          onClose={() => {
+            setIsDetailModalOpen(false)
+            setSelected(null)
+          }}
+          onUpdate={() => {
+            load()
+          }}
+        />
       )}
     
       {/* Modal de Confirmação de Exclusão */}
       {isDeleteCandidateModalOpen && selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="relative w-full max-w-md rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <h2 className="text-lg font-semibold text-gray-900">Deletar Candidato</h2>
-              <button onClick={() => setIsDeleteCandidateModalOpen(false)} className="text-gray-500 hover:text-gray-800" aria-label="Fechar">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-2 sm:px-4">
+          <div className="relative w-full max-w-md rounded-xl sm:rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4">
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900">Deletar Candidato</h2>
+              <button onClick={() => setIsDeleteCandidateModalOpen(false)} className="text-gray-500 hover:text-gray-800 p-1" aria-label="Fechar">
                 ✕
               </button>
             </div>
-            <div className="px-6 py-6 space-y-4">
-              <p className="text-sm text-gray-700">
+            <div className="px-4 sm:px-6 py-4 sm:py-6 space-y-3 sm:space-y-4">
+              <p className="text-xs sm:text-sm text-gray-700">
                 Tem certeza de que deseja deletar o candidato <strong>{selected.name}</strong>?
               </p>
-              <p className="text-sm text-gray-600">
+              <p className="text-xs sm:text-sm text-gray-600">
                 Esta ação é irreversível e removerá todas as suas informações e aplicações do sistema.
               </p>
             </div>
-            <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
+            <div className="flex items-center justify-end gap-2 sm:gap-3 border-t border-gray-200 px-4 sm:px-6 py-3 sm:py-4">
               <button
                 onClick={() => setIsDeleteCandidateModalOpen(false)}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="rounded-lg border border-gray-300 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Cancelar
               </button>
               <button
                 onClick={() => handleDeleteCandidate(selected.id)}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                className="rounded-lg bg-red-600 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-white hover:bg-red-700"
               >
                 Deletar
               </button>
@@ -870,157 +895,227 @@ export default function CandidatesPage() {
         </div>
       )}
     
+      {/* Modal de Atribuir Candidato à Vaga */}
+      {isAssignJobModalOpen && selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-2 sm:px-4">
+          <div className="relative w-full max-w-md rounded-xl sm:rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4">
+              <div className="min-w-0">
+                <h2 className="text-base sm:text-lg font-semibold text-gray-900">Atribuir à Vaga</h2>
+                <p className="text-xs sm:text-sm text-gray-500 truncate">Selecione a vaga para {selected.name}</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsAssignJobModalOpen(false)
+                  setSelected(null)
+                  setSelectedJobForAssign('')
+                }} 
+                className="text-gray-500 hover:text-gray-800 p-1 flex-shrink-0" 
+                aria-label="Fechar"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="px-4 sm:px-6 py-4 sm:py-6 space-y-3 sm:space-y-4">
+              <div>
+                <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1.5 sm:mb-2">Selecione a Vaga *</label>
+                <select 
+                  value={selectedJobForAssign} 
+                  onChange={(e) => setSelectedJobForAssign(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-xs sm:text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                >
+                  <option value="">Selecione uma vaga</option>
+                  {availableJobs.map((job) => (
+                    <option key={job.id} value={job.id}>
+                      {job.title}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] sm:text-xs text-gray-500 mt-1.5 sm:mt-2">
+                  Candidato será direcionado para a primeira etapa da vaga.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 sm:gap-3 border-t border-gray-200 px-4 sm:px-6 py-3 sm:py-4">
+              <button
+                onClick={() => {
+                  setIsAssignJobModalOpen(false)
+                  setSelected(null)
+                  setSelectedJobForAssign('')
+                }}
+                disabled={assigningJob}
+                className="rounded-lg border border-gray-300 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (selected && selectedJobForAssign) {
+                    handleAssignCandidateToJob(selected.id, selectedJobForAssign)
+                  }
+                }}
+                disabled={!selectedJobForAssign || assigningJob}
+                className="rounded-lg bg-blue-600 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {assigningJob ? 'Atribuindo...' : 'Atribuir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Criar Candidato */}
       {isCreateCandidateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="relative w-full max-w-4xl rounded-2xl bg-white shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 sticky top-0 bg-white">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Cadastrar Novo Candidato</h2>
-                <p className="text-sm text-gray-500">Preencha os dados do candidato para adicionar à plataforma</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-2 sm:px-4">
+          <div className="relative w-full max-w-4xl rounded-xl sm:rounded-2xl bg-white shadow-xl max-h-[95vh] sm:max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4 sticky top-0 bg-white flex-shrink-0">
+              <div className="min-w-0">
+                <h2 className="text-base sm:text-lg font-semibold text-gray-900">Cadastrar Candidato</h2>
+                <p className="text-xs sm:text-sm text-gray-500 hidden sm:block">Preencha os dados para adicionar à plataforma</p>
               </div>
-              <button onClick={() => setIsCreateCandidateModalOpen(false)} className="text-gray-500 hover:text-gray-800" aria-label="Fechar">
+              <button onClick={() => setIsCreateCandidateModalOpen(false)} className="text-gray-500 hover:text-gray-800 p-1 flex-shrink-0" aria-label="Fechar">
                 ✕
               </button>
             </div>
             
-            <form onSubmit={(e) => { onSubmit(e); }} className="p-6 grid gap-4">
-              {/* Campos obrigatórios */}
-              <div className="border-t pt-4">
-                <h3 className="text-sm font-medium text-gray-700 mb-3">Informações Obrigatórias</h3>
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Nome *</label>
-                    <input value={form.name} onChange={(e)=>setForm((f)=>({ ...f, name: e.target.value }))} placeholder="Nome completo" className="border rounded px-3 py-2 w-full" required />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">E-mail *</label>
-                    <input value={form.email} onChange={(e)=>setForm((f)=>({ ...f, email: e.target.value }))} type="email" placeholder="email@exemplo.com" className="border rounded px-3 py-2 w-full" required />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Telefone *</label>
-                    <input value={form.phone} onChange={(e)=>setForm((f)=>({ ...f, phone: e.target.value }))} placeholder="(00) 00000-0000" className="border rounded px-3 py-2 w-full" required />
-                  </div>
-                </div>
-                <div className="grid md:grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Vaga *</label>
-                    <select value={form.job_id} onChange={(e)=>setForm((f)=>({ ...f, job_id: e.target.value, stage_id: '' }))} className="w-full border rounded px-3 py-2" required>
-                      <option value="">Selecione a vaga</option>
-                      {availableJobs.map((j)=> <option key={j.id} value={j.id}>{j.title}</option>)}
-                    </select>
-                  </div>
-                  {form.job_id && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Etapa *</label>
-                      <select value={form.stage_id} onChange={(e)=>setForm((f)=>({ ...f, stage_id: e.target.value }))} className="w-full border rounded px-3 py-2" required>
-                        <option value="">Selecione a etapa</option>
-                        {availableStages.map((s)=> <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">CV (Anexo) *</label>
-                  <input 
-                    type="file" 
-                    accept=".pdf,.doc,.docx"
-                    onChange={(e)=>{
-                      const file = e.target.files?.[0] || null
-                      if (file) {
+            <form onSubmit={(e) => { onSubmit(e); }} className="p-4 sm:p-6 grid gap-3 sm:gap-4 overflow-y-auto flex-1">
+        {/* Campos obrigatórios */}
+        <div className="border-t pt-3 sm:pt-4">
+          <h3 className="text-xs sm:text-sm font-medium text-gray-700 mb-2 sm:mb-3">Informações Obrigatórias</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Nome *</label>
+              <input value={form.name} onChange={(e)=>setForm((f)=>({ ...f, name: e.target.value }))} placeholder="Nome completo" className="border rounded px-3 py-1.5 sm:py-2 w-full text-xs sm:text-sm" required />
+            </div>
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">E-mail *</label>
+              <input value={form.email} onChange={(e)=>setForm((f)=>({ ...f, email: e.target.value }))} type="email" placeholder="email@exemplo.com" className="border rounded px-3 py-1.5 sm:py-2 w-full text-xs sm:text-sm" required />
+            </div>
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Telefone *</label>
+              <input value={form.phone} onChange={(e)=>setForm((f)=>({ ...f, phone: e.target.value }))} placeholder="(00) 00000-0000" className="border rounded px-3 py-1.5 sm:py-2 w-full text-xs sm:text-sm" required />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mt-3 sm:mt-4">
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Vaga *</label>
+              <select value={form.job_id} onChange={(e)=>setForm((f)=>({ ...f, job_id: e.target.value, stage_id: '' }))} className="w-full border rounded px-3 py-1.5 sm:py-2 text-xs sm:text-sm" required>
+                <option value="">Selecione a vaga</option>
+                {availableJobs.map((j)=> <option key={j.id} value={j.id}>{j.title}</option>)}
+              </select>
+            </div>
+            {form.job_id && (
+              <div>
+                <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Etapa *</label>
+                <select value={form.stage_id} onChange={(e)=>setForm((f)=>({ ...f, stage_id: e.target.value }))} className="w-full border rounded px-3 py-1.5 sm:py-2 text-xs sm:text-sm" required>
+                  <option value="">Selecione a etapa</option>
+                  {availableStages.map((s)=> <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+          <div className="mt-3 sm:mt-4">
+            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">CV (Anexo) *</label>
+            <input 
+              type="file" 
+              accept=".pdf,.doc,.docx"
+              onChange={(e)=>{
+                const file = e.target.files?.[0] || null
+                if (file) {
                         const maxSize = 10 * 1024 * 1024
-                        if (file.size > maxSize) {
-                          notify({ title: 'Arquivo muito grande', description: `O arquivo deve ter no máximo 10MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
-                          e.target.value = ''
-                          return
-                        }
-                      }
-                      setForm((f)=>({ ...f, resumeFile: file }))
-                    }} 
-                    className="border rounded px-3 py-2 w-full" 
-                    required 
-                  />
-                  {form.resumeFile && (
-                    <p className="text-sm text-gray-600 mt-1">
-                      Arquivo: {form.resumeFile.name} ({(form.resumeFile.size / 1024 / 1024).toFixed(2)}MB)
-                    </p>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 10MB</p>
-                </div>
-              </div>
+                  if (file.size > maxSize) {
+                    notify({ title: 'Arquivo muito grande', description: `O arquivo deve ter no máximo 10MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
+                    e.target.value = ''
+                    return
+                  }
+                }
+                setForm((f)=>({ ...f, resumeFile: file }))
+              }} 
+              className="border rounded px-3 py-1.5 sm:py-2 w-full text-xs sm:text-sm" 
+              required 
+            />
+            {form.resumeFile && (
+              <p className="text-xs sm:text-sm text-gray-600 mt-1">
+                Arquivo: {form.resumeFile.name} ({(form.resumeFile.size / 1024 / 1024).toFixed(2)}MB)
+              </p>
+            )}
+            <p className="text-[10px] sm:text-xs text-gray-500 mt-1">Tamanho máximo: 10MB</p>
+          </div>
+        </div>
 
-              {/* Campos opcionais */}
-              <div className="border-t pt-4">
-                <h3 className="text-sm font-medium text-gray-700 mb-3">Informações Opcionais</h3>
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Cidade</label>
-                    <input value={form.city} onChange={(e)=>setForm((f)=>({ ...f, city: e.target.value }))} placeholder="Cidade" className="border rounded px-3 py-2 w-full" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Estado</label>
-                    <input value={form.state} onChange={(e)=>setForm((f)=>({ ...f, state: e.target.value }))} placeholder="Estado" className="border rounded px-3 py-2 w-full" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Filhos</label>
-                    <input type="number" min="0" value={form.children} onChange={(e)=>setForm((f)=>({ ...f, children: e.target.value }))} placeholder="Número de filhos" className="border rounded px-3 py-2 w-full" />
-                  </div>
-                </div>
-                <div className="grid md:grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Endereço</label>
-                    <input value={form.address} onChange={(e)=>setForm((f)=>({ ...f, address: e.target.value }))} placeholder="Endereço completo" className="border rounded px-3 py-2 w-full" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Sexo</label>
-                    <select value={form.gender} onChange={(e)=>setForm((f)=>({ ...f, gender: e.target.value }))} className="w-full border rounded px-3 py-2">
-                      <option value="">Selecione</option>
-                      <option value="Masculino">Masculino</option>
-                      <option value="Feminino">Feminino</option>
-                      <option value="Outro">Outro</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Idiomas</label>
-                  <input 
-                    value={languageInput} 
-                    onChange={(e)=>setLanguageInput(e.target.value)} 
-                    onKeyDown={(e)=>{
-                      if(e.key==='Enter'){
-                        e.preventDefault()
-                        const v = languageInput.trim()
-                        if(v) setForm((f)=>({ ...f, languages: [...f.languages, v] }))
-                        setLanguageInput('')
-                      }
-                    }}
-                    placeholder="Digite um idioma e pressione Enter" 
-                    className="border rounded px-3 py-2 w-full" 
-                  />
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {form.languages.map((lang, i)=>(
-                      <span key={i} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm flex items-center gap-2">
-                        {lang}
-                        <button type="button" onClick={()=>setForm((f)=>({ ...f, languages: f.languages.filter((_,idx)=>idx!==i) }))} className="text-blue-600 hover:text-blue-800">×</button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Formação</label>
-                  <textarea value={form.education} onChange={(e)=>setForm((f)=>({ ...f, education: e.target.value }))} placeholder="Descreva a formação do candidato" className="border rounded px-3 py-2 w-full h-24 resize-none" />
-                </div>
-              </div>
+        {/* Campos opcionais */}
+        <div className="border-t pt-3 sm:pt-4">
+          <h3 className="text-xs sm:text-sm font-medium text-gray-700 mb-2 sm:mb-3">Informações Opcionais</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Cidade</label>
+              <input value={form.city} onChange={(e)=>setForm((f)=>({ ...f, city: e.target.value }))} placeholder="Cidade" className="border rounded px-3 py-1.5 sm:py-2 w-full text-xs sm:text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Estado</label>
+              <input value={form.state} onChange={(e)=>setForm((f)=>({ ...f, state: e.target.value }))} placeholder="Estado" className="border rounded px-3 py-1.5 sm:py-2 w-full text-xs sm:text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Filhos</label>
+              <input type="number" min="0" value={form.children} onChange={(e)=>setForm((f)=>({ ...f, children: e.target.value }))} placeholder="Número" className="border rounded px-3 py-1.5 sm:py-2 w-full text-xs sm:text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mt-3 sm:mt-4">
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Endereço</label>
+              <input value={form.address} onChange={(e)=>setForm((f)=>({ ...f, address: e.target.value }))} placeholder="Endereço completo" className="border rounded px-3 py-1.5 sm:py-2 w-full text-xs sm:text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Sexo</label>
+              <select value={form.gender} onChange={(e)=>setForm((f)=>({ ...f, gender: e.target.value }))} className="w-full border rounded px-3 py-1.5 sm:py-2 text-xs sm:text-sm">
+                <option value="">Selecione</option>
+                <option value="Masculino">Masculino</option>
+                <option value="Feminino">Feminino</option>
+                <option value="Outro">Outro</option>
+              </select>
+            </div>
+          </div>
+          <div className="mt-3 sm:mt-4">
+            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Idiomas</label>
+            <input 
+              value={languageInput} 
+              onChange={(e)=>setLanguageInput(e.target.value)} 
+              onKeyDown={(e)=>{
+                if(e.key==='Enter'){
+                  e.preventDefault()
+                  const v = languageInput.trim()
+                  if(v) setForm((f)=>({ ...f, languages: [...f.languages, v] }))
+                  setLanguageInput('')
+                }
+              }}
+              placeholder="Digite um idioma e pressione Enter" 
+              className="border rounded px-3 py-1.5 sm:py-2 w-full text-xs sm:text-sm" 
+            />
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 mt-1.5 sm:mt-2">
+              {form.languages.map((lang, i)=>(
+                <span key={i} className="px-2 sm:px-3 py-0.5 sm:py-1 bg-blue-100 text-blue-800 rounded-full text-xs sm:text-sm flex items-center gap-1 sm:gap-2">
+                  {lang}
+                  <button type="button" onClick={()=>setForm((f)=>({ ...f, languages: f.languages.filter((_,idx)=>idx!==i) }))} className="text-blue-600 hover:text-blue-800">×</button>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="mt-3 sm:mt-4">
+            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">Formação</label>
+            <textarea value={form.education} onChange={(e)=>setForm((f)=>({ ...f, education: e.target.value }))} placeholder="Descreva a formação do candidato" className="border rounded px-3 py-1.5 sm:py-2 w-full h-20 sm:h-24 resize-none text-xs sm:text-sm" />
+          </div>
+        </div>
 
-              <div className="border-t pt-4 flex items-center justify-end gap-2">
-                <button type="button" onClick={() => setIsCreateCandidateModalOpen(false)} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+              <div className="border-t pt-3 sm:pt-4 flex items-center justify-end gap-2 flex-shrink-0">
+                <button type="button" onClick={() => setIsCreateCandidateModalOpen(false)} className="rounded-md border border-gray-300 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50">
                   Cancelar
                 </button>
-                <button disabled={loading || uploadingResume} className="rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60">
-                  {loading || uploadingResume ? 'Salvando...' : 'Cadastrar Candidato'}
-                </button>
-              </div>
-            </form>
+                <button disabled={loading || uploadingResume} className="rounded-md bg-green-600 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60">
+            {loading || uploadingResume ? 'Salvando...' : 'Cadastrar'}
+          </button>
+        </div>
+      </form>
           </div>
         </div>
       )}

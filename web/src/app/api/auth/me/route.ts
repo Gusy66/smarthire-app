@@ -28,7 +28,19 @@ export async function GET() {
     const finalName = tableName || authName || null
     const finalEmail = data?.email || authEmail || null
 
-    return Response.json({ id: user.id, name: finalName, email: finalEmail })
+    // Garantir que nunca retornamos o email como nome (comparação case-insensitive)
+    let safeName: string | null = null
+    if (finalName && finalEmail) {
+      // Se o nome é diferente do email (ignorando case), usar o nome
+      if (finalName.toLowerCase() !== finalEmail.toLowerCase()) {
+        safeName = finalName
+      }
+    } else if (finalName) {
+      // Se temos nome mas não temos email, usar o nome
+      safeName = finalName
+    }
+
+    return Response.json({ id: user.id, name: safeName, email: finalEmail })
   } catch (error: any) {
     if (error?.message === 'unauthorized') {
       return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })

@@ -32,12 +32,36 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: { code: 'validation_error', message: 'candidate_id e job_id são obrigatórios' } }, { status: 400 })
   }
   const supabase = getSupabaseAdmin()
+  
+  // Criar a application
   const { data, error } = await supabase
     .from('applications')
     .insert({ candidate_id, job_id })
     .select('id')
     .single()
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
+
+  // Buscar a primeira etapa da vaga (menor order_index)
+  const { data: firstStage } = await supabase
+    .from('job_stages')
+    .select('id')
+    .eq('job_id', job_id)
+    .order('order_index', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  // Se houver etapas, criar automaticamente o application_stage para a primeira etapa
+  if (firstStage) {
+    await supabase
+      .from('application_stages')
+      .insert({
+        application_id: data.id,
+        stage_id: firstStage.id,
+        status: 'pending',
+      })
+      .select('id')
+      .single()
+  }
 
   return Response.json({ id: data.id })
 }

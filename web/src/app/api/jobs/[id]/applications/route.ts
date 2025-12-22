@@ -84,12 +84,36 @@ export async function POST(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga solicitada' } }, { status: 403 })
   }
 
+  // Criar a application
   const { data, error } = await supabase
     .from('applications')
     .insert({ candidate_id, job_id: jobId })
     .select('id')
     .single()
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
+
+  // Buscar a primeira etapa da vaga (menor order_index)
+  const { data: firstStage } = await supabase
+    .from('job_stages')
+    .select('id')
+    .eq('job_id', jobId)
+    .order('order_index', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  // Se houver etapas, criar automaticamente o application_stage para a primeira etapa
+  if (firstStage) {
+    await supabase
+      .from('application_stages')
+      .insert({
+        application_id: data.id,
+        stage_id: firstStage.id,
+        status: 'pending',
+      })
+      .select('id')
+      .single()
+  }
+
   return Response.json({ id: data.id })
 }
 

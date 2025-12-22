@@ -15,7 +15,7 @@ export default function Home() {
             justa e eficiente. Encontre os melhores talentos para sua empresa.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href="/jobs" className="btn btn-primary text-lg px-8 py-4">
+            <Link href="/dashboard" className="btn btn-primary text-lg px-8 py-4">
               🚀 Começar Agora
             </Link>
             <Link href="/settings/ai" className="btn btn-outline text-lg px-8 py-4">
@@ -153,7 +153,7 @@ export default function Home() {
           <p className="text-xl text-primary-green-100 mb-8 max-w-2xl mx-auto">
             Junte-se a empresas que já estão usando IA para encontrar os melhores talentos
           </p>
-          <Link href="/jobs" className="btn bg-white text-primary-green-600 hover:bg-primary-green-50 text-lg px-8 py-4">
+          <Link href="/dashboard" className="btn bg-white text-primary-green-600 hover:bg-primary-green-50 text-lg px-8 py-4">
             Começar Gratuitamente
           </Link>
         </div>

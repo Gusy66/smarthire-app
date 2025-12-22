@@ -2,12 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser'
-import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ToastProvider'
 
 export default function LoginPage() {
   const supabase = getSupabaseBrowser()
-  const router = useRouter()
   const { notify } = useToast()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -19,13 +17,13 @@ export default function LoginPage() {
 
     supabase.auth.getSession().then(({ data }) => {
       if (!cancelled && data.session) {
-        router.replace('/jobs')
+        window.location.href = '/dashboard'
       }
     })
 
     const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
       if (!cancelled && event === 'SIGNED_IN' && session) {
-        router.replace('/jobs')
+        window.location.href = '/dashboard'
       }
     })
 
@@ -33,7 +31,7 @@ export default function LoginPage() {
       cancelled = true
       subscription?.subscription?.unsubscribe?.()
     }
-  }, [router, supabase])
+  }, [supabase])
 
   async function signInEmailPass(e: React.FormEvent) {
     e.preventDefault()
@@ -70,7 +68,10 @@ export default function LoginPage() {
       }
       console.log('Login bem-sucedido, redirecionando...')
       notify({ title: 'Login efetuado', variant: 'success' })
-      router.replace('/jobs')
+      // Pequeno delay para garantir que o cookie seja processado pelo navegador
+      await new Promise(resolve => setTimeout(resolve, 100))
+      // Usar window.location para garantir que o cookie seja enviado nas próximas requisições
+      window.location.href = '/dashboard'
     } catch (err: any) {
       notify({ title: 'Erro inesperado', description: String(err?.message ?? err), variant: 'error' })
     } finally {
@@ -82,7 +83,7 @@ export default function LoginPage() {
     e.preventDefault()
     setMagicLoading(true)
     const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || window.location.origin).replace(/\/$/, '')
-    const redirectTo = `${baseUrl}/jobs`
+    const redirectTo = `${baseUrl}/dashboard`
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {

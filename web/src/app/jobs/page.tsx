@@ -1,23 +1,32 @@
 'use client'
 
+import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
-import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ToastProvider'
 
-type Job = {
-  id: string
-  title: string
-  description?: string
-  department?: string
-  location?: string
-  status: 'open' | 'paused' | 'closed'
-  applications_count?: number
-  created_at?: string
-  salary?: string
+type Overview = {
+  active_jobs: number
+  total_candidates: number
+  avg_time_days: number
+  success_rate: number
+  jobs_this_week: number
+  candidates_today: number
+  recent_jobs: { 
+    id: string
+    title: string
+    status: 'open' | 'closed'
+    created_at?: string
+    candidate_count: number
+  }[]
 }
 
-type JobStats = { total_jobs: number; active_jobs: number; total_candidates: number }
+type RankingItem = {
+  candidate: { id: string; name: string; email?: string }
+  job: { id: string; title: string }
+  currentStage: string
+  averageScore: number
+}
 
 type JobDetail = {
   id: string
@@ -40,29 +49,29 @@ type JobDetail = {
   status: 'open' | 'paused' | 'closed'
 }
 
+function formatRelative(date?: string): string {
+  if (!date) return '—'
+  const d = new Date(date)
+  const diff = Date.now() - d.getTime()
+  const sec = Math.floor(diff / 1000)
+  const min = Math.floor(sec / 60)
+  const hr = Math.floor(min / 60)
+  const day = Math.floor(hr / 24)
+  const week = Math.floor(day / 7)
+  
+  if (week > 0) return `Publicada há ${week} semana${week > 1 ? 's' : ''}`
+  if (day > 0) return `Publicada há ${day} dia${day > 1 ? 's' : ''}`
+  if (hr > 0) return `Publicada há ${hr} hora${hr > 1 ? 's' : ''}`
+  if (min > 0) return `Publicada há ${min} minuto${min > 1 ? 's' : ''}`
+  return 'Publicada agora'
+}
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 type EditJobModalProps = {
   jobId: string | null
   onClose: () => void
   onSaved: () => void
-}
-
-const statusLabels: Record<Job['status'], string> = {
-  open: 'Ativa',
-  paused: 'Pausada',
-  closed: 'Encerrada',
-}
-
-const statusBadgeClasses: Record<Job['status'], string> = {
-  open: 'bg-green-100 text-green-700',
-  paused: 'bg-yellow-100 text-yellow-700',
-  closed: 'bg-gray-100 text-gray-600',
-}
-
-function formatDate(date?: string) {
-  if (!date) return '—'
-  const d = new Date(date)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleDateString('pt-BR')
 }
 
 function EditJobModal({ jobId, onClose, onSaved }: EditJobModalProps) {
@@ -100,7 +109,7 @@ function EditJobModal({ jobId, onClose, onSaved }: EditJobModalProps) {
             requirements: Array.isArray(item.requirements) ? item.requirements : [],
             skills: Array.isArray(item.skills) ? item.skills : [],
             benefits: Array.isArray(item.benefits) ? item.benefits : [],
-            status: (item.status as Job['status']) || 'open',
+            status: (item.status as JobDetail['status']) || 'open',
           })
         }
       })
@@ -173,18 +182,18 @@ function EditJobModal({ jobId, onClose, onSaved }: EditJobModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-      <div className="relative w-full max-w-4xl rounded-2xl bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Editar Vaga</h2>
-            <p className="text-sm text-gray-500">Atualize as informações da vaga e salve as alterações</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-2 sm:px-4">
+      <div className="relative w-full max-w-4xl rounded-xl sm:rounded-2xl bg-white shadow-xl max-h-[95vh] sm:max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4 flex-shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Editar Vaga</h2>
+            <p className="text-xs sm:text-sm text-gray-500 hidden sm:block">Atualize as informações da vaga e salve as alterações</p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-800" aria-label="Fechar">
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-800 p-1" aria-label="Fechar">
             ✕
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto px-6 py-6 space-y-6">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
           {loading ? (
             <div className="py-20 text-center text-sm text-gray-500">Carregando detalhes da vaga...</div>
           ) : (
@@ -209,19 +218,10 @@ function EditJobModal({ jobId, onClose, onSaved }: EditJobModalProps) {
                   />
                 </div>
                 <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-gray-700">Localização</label>
-                  <input
-                    value={form.location}
-                    onChange={(e) => setForm((prev) => (prev ? { ...prev, location: e.target.value } : prev))}
-                    className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
-                    placeholder="Ex: São Paulo - SP"
-                  />
-                </div>
-                <div className="flex flex-col gap-2">
                   <label className="text-sm font-medium text-gray-700">Status</label>
                   <select
                     value={form.status}
-                    onChange={(e) => setForm((prev) => (prev ? { ...prev, status: e.target.value as Job['status'] } : prev))}
+                    onChange={(e) => setForm((prev) => (prev ? { ...prev, status: e.target.value as JobDetail['status'] } : prev))}
                     className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
                   >
                     <option value="open">Ativa</option>
@@ -229,193 +229,7 @@ function EditJobModal({ jobId, onClose, onSaved }: EditJobModalProps) {
                     <option value="closed">Encerrada</option>
                   </select>
                 </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-gray-700">Faixa Salarial</label>
-                  <input
-                    value={form.salary}
-                    onChange={(e) => setForm((prev) => (prev ? { ...prev, salary: e.target.value } : prev))}
-                    className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
-                    placeholder="Ex: R$ 8.000 - R$ 12.000"
-                  />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-gray-700">Modelo de Trabalho</label>
-                  <input
-                    value={form.work_model}
-                    onChange={(e) => setForm((prev) => (prev ? { ...prev, work_model: e.target.value } : prev))}
-                    className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
-                    placeholder="Ex: Home Office"
-                  />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-gray-700">Tipo de Contrato</label>
-                  <input
-                    value={form.contract_type}
-                    onChange={(e) => setForm((prev) => (prev ? { ...prev, contract_type: e.target.value } : prev))}
-                    className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
-                    placeholder="Ex: CLT"
-                  />
-                </div>
-                <div className="md:col-span-2 flex flex-col gap-2">
-                  <label className="text-sm font-medium text-gray-700">Descrição Geral</label>
-                  <textarea
-                    value={form.description}
-                    onChange={(e) => setForm((prev) => (prev ? { ...prev, description: e.target.value } : prev))}
-                    className="rounded-md border border-gray-300 px-3 py-2 text-sm h-24 resize-none focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
-                  />
-                </div>
               </section>
-
-              <section className="space-y-6">
-                <div className="grid gap-6 lg:grid-cols-2">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm font-medium text-gray-700">Descrição do Cargo</label>
-                    <textarea
-                      value={form.job_description}
-                      onChange={(e) => setForm((prev) => (prev ? { ...prev, job_description: e.target.value } : prev))}
-                      className="rounded-md border border-gray-300 px-3 py-2 text-sm h-28 resize-none focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm font-medium text-gray-700">Responsabilidades e Atribuições</label>
-                    <textarea
-                      value={form.responsibilities}
-                      onChange={(e) => setForm((prev) => (prev ? { ...prev, responsibilities: e.target.value } : prev))}
-                      className="rounded-md border border-gray-300 px-3 py-2 text-sm h-28 resize-none focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                    />
-                  </div>
-                  <div className="lg:col-span-2 flex flex-col gap-2">
-                    <label className="text-sm font-medium text-gray-700">Requisitos e Habilidades</label>
-                    <textarea
-                      value={form.requirements_and_skills}
-                      onChange={(e) => setForm((prev) => (prev ? { ...prev, requirements_and_skills: e.target.value } : prev))}
-                      className="rounded-md border border-gray-300 px-3 py-2 text-sm h-28 resize-none focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid gap-6 lg:grid-cols-3">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700">Requisitos (lista)</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={reqInput}
-                        onChange={(e) => setReqInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            addChip('requirements', reqInput)
-                            setReqInput('')
-                          }
-                        }}
-                        placeholder="Digite e pressione Enter"
-                        className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                      />
-                      <button type="button" onClick={() => { addChip('requirements', reqInput); setReqInput('') }} className="px-3 py-2 text-xs font-semibold text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
-                        Adicionar
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {form.requirements.map((req, idx) => (
-                        <span key={idx} className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700">
-                          {req}
-                          <button type="button" onClick={() => removeChip('requirements', idx)} className="text-gray-500 hover:text-gray-700">×</button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700">Habilidades</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={skillInput}
-                        onChange={(e) => setSkillInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            addChip('skills', skillInput)
-                            setSkillInput('')
-                          }
-                        }}
-                        placeholder="Digite e pressione Enter"
-                        className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                      />
-                      <button type="button" onClick={() => { addChip('skills', skillInput); setSkillInput('') }} className="px-3 py-2 text-xs font-semibold text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
-                        Adicionar
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {form.skills.map((skill, idx) => (
-                        <span key={idx} className="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-xs text-blue-700">
-                          {skill}
-                          <button type="button" onClick={() => removeChip('skills', idx)} className="text-blue-600 hover:text-blue-800">×</button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700">Benefícios</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={benefitInput}
-                        onChange={(e) => setBenefitInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            addChip('benefits', benefitInput)
-                            setBenefitInput('')
-                          }
-                        }}
-                        placeholder="Digite e pressione Enter"
-                        className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                      />
-                      <button type="button" onClick={() => { addChip('benefits', benefitInput); setBenefitInput('') }} className="px-3 py-2 text-xs font-semibold text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
-                        Adicionar
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {form.benefits.map((benefit, idx) => (
-                        <span key={idx} className="inline-flex items-center gap-2 rounded-full bg-purple-100 px-3 py-1 text-xs text-purple-700">
-                          {benefit}
-                          <button type="button" onClick={() => removeChip('benefits', idx)} className="text-purple-600 hover:text-purple-800">×</button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 lg:grid-cols-3">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm font-medium text-gray-700">Horário</label>
-                    <input
-                      value={form.work_schedule}
-                      onChange={(e) => setForm((prev) => (prev ? { ...prev, work_schedule: e.target.value } : prev))}
-                      className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                      placeholder="Ex: 09h às 18h"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-sm font-medium text-gray-700">Disponibilidade para viajar</label>
-                    <input
-                      value={form.travel_availability}
-                      onChange={(e) => setForm((prev) => (prev ? { ...prev, travel_availability: e.target.value } : prev))}
-                      className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                      placeholder="Ex: Ocasional"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2 lg:col-span-1">
-                    <label className="text-sm font-medium text-gray-700">Observações</label>
-                    <textarea
-                      value={form.observations}
-                      onChange={(e) => setForm((prev) => (prev ? { ...prev, observations: e.target.value } : prev))}
-                      className="rounded-md border border-gray-300 px-3 py-2 text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                    />
-                  </div>
-                </div>
-              </section>
-
               <div className="flex items-center justify-end gap-2 pt-4">
                 <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
                   Cancelar
@@ -439,64 +253,64 @@ function EditJobModal({ jobId, onClose, onSaved }: EditJobModalProps) {
 export default function JobsPage() {
   const router = useRouter()
   const { notify } = useToast()
-  const [jobs, setJobs] = useState<Job[]>([])
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'open' | 'paused' | 'closed' | ''>('')
-  const [page, setPage] = useState(1)
-  const [total, setTotal] = useState(0)
-  const pageSize = 20
-  const [error, setError] = useState<string | null>(null)
-  const [stats, setStats] = useState<JobStats | null>(null)
-  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table')
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [overview, setOverview] = useState<Overview | null>(null)
+  const [ranking, setRanking] = useState<RankingItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadingRanking, setLoadingRanking] = useState(true)
   const [editingJobId, setEditingJobId] = useState<string | null>(null)
-  const menuRef = useRef<HTMLDivElement | null>(null)
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setOpenMenuId(null)
+  const loadOverview = useCallback(async (attempt = 0) => {
+    try {
+      const res = await fetch('/api/dashboard/overview', { credentials: 'same-origin' })
+      if (res.status === 401) {
+        if (attempt < 3) {
+          await delay(500 * (attempt + 1))
+          return loadOverview(attempt + 1)
+        }
+        return
+      }
+      if (res.ok) {
+        const json = await res.json()
+        setOverview(json)
+      }
+    } catch {
+      if (attempt < 3) {
+        await delay(500 * (attempt + 1))
+        return loadOverview(attempt + 1)
       }
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const loadRanking = useCallback(async () => {
+    setLoadingRanking(true)
+    try {
+      const res = await fetch('/api/dashboard/ranking', { credentials: 'same-origin' })
+      if (res.ok) {
+        const json = await res.json()
+        setRanking(json.items || [])
+      }
+    } catch {
+      setRanking([])
+    } finally {
+      setLoadingRanking(false)
+    }
   }, [])
 
   useEffect(() => {
-    fetchStats()
-  }, [])
-
-  useEffect(() => {
-    fetchJobs()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page])
-
-  const filteredJobs = useMemo(() => jobs, [jobs])
-
-  async function fetchJobs() {
-    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
-    if (search) params.set('search', search)
-    if (statusFilter) params.set('status', statusFilter)
-    const res = await fetch(`/api/jobs?${params}`)
-    if (res.status === 401) {
-      setError('Faça login para visualizar suas vagas')
-      setJobs([])
-      setTotal(0)
-      return
+    let mounted = true
+    
+    async function init() {
+      setLoading(true)
+      await Promise.all([loadOverview(), loadRanking()])
+      if (mounted) {
+        setLoading(false)
+      }
     }
-    const json = await res.json()
-    setError(null)
-    setJobs(json.items || [])
-    setTotal(json.total || 0)
-  }
-
-  async function fetchStats() {
-    const res = await fetch('/api/jobs/stats')
-    if (res.ok) {
-      const json = await res.json()
-      setStats(json)
-    }
-  }
+    
+    init()
+    
+    return () => { mounted = false }
+  }, [loadOverview, loadRanking])
 
   async function handleDelete(id: string) {
     if (!confirm('Excluir esta vaga? Essa ação não pode ser desfeita.')) return
@@ -511,378 +325,339 @@ export default function JobsPage() {
       notify({ title: 'Erro', description: message, variant: 'error' })
       return
     }
-    await Promise.all([fetchJobs(), fetchStats()])
     notify({ title: 'Vaga excluída', variant: 'success' })
+    await loadOverview()
   }
-
-  async function handleDuplicate(id: string) {
-    const res = await fetch(`/api/jobs/${id}`)
-    const json = await res.json()
-    if (!res.ok || !json?.item) {
-      notify({ title: 'Erro', description: 'Não foi possível duplicar esta vaga.', variant: 'error' })
-      return
-    }
-    const item = json.item as JobDetail
-    const payload = {
-      title: `${item.title} (cópia)`,
-      description: item.description,
-      location: item.location,
-      salary: item.salary,
-      work_model: item.work_model,
-      contract_type: item.contract_type,
-      requirements: item.requirements,
-      skills: item.skills,
-      benefits: item.benefits,
-      department: item.department,
-      job_description: item.job_description,
-      responsibilities: item.responsibilities,
-      requirements_and_skills: item.requirements_and_skills,
-      work_schedule: item.work_schedule,
-      travel_availability: item.travel_availability,
-      observations: item.observations,
-      status: 'open',
-    }
-    const createRes = await fetch('/api/jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    if (!createRes.ok) {
-      notify({ title: 'Erro', description: 'Falha ao criar a cópia da vaga.', variant: 'error' })
-      return
-    }
-    notify({ title: 'Vaga duplicada', variant: 'success' })
-    await fetchJobs()
-    fetchStats()
-  }
-
-  async function handleTogglePause(job: Job) {
-    const nextStatus: Job['status'] = job.status === 'paused' ? 'open' : 'paused'
-    const res = await fetch(`/api/jobs/${job.id}`, {
-      method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: nextStatus }),
-    })
-    if (!res.ok) {
-      notify({ title: 'Erro', description: 'Não foi possível atualizar o status da vaga.', variant: 'error' })
-      return
-    }
-    notify({ title: nextStatus === 'paused' ? 'Vaga pausada' : 'Vaga reativada', variant: 'success' })
-    await fetchJobs()
-    fetchStats()
-  }
-
-  const applyFilters = () => {
-    setPage(1)
-    fetchJobs()
-  }
-
-  const renderActions = (job: Job) => (
-    <div
-      className="relative inline-block text-left"
-      ref={openMenuId === job.id ? menuRef : null}
-      onClick={(event) => event.stopPropagation()}
-    >
-      <button
-        onClick={(event) => {
-          event.stopPropagation()
-          setOpenMenuId((prev) => (prev === job.id ? null : job.id))
-        }}
-        className="rounded-full border border-gray-300 p-2 text-gray-600 transition hover:bg-gray-100"
-        aria-label="Abrir ações"
-      >
-        ⋯
-      </button>
-      {openMenuId === job.id && (
-        <div className="absolute right-0 z-40 mt-2 w-48 origin-top-right rounded-xl border border-gray-200 bg-white shadow-lg">
-          <div className="py-1 text-sm text-gray-700">
-            <button
-              onClick={(event) => {
-                event.stopPropagation()
-                router.push(`/jobs/${job.id}/stages`)
-                setOpenMenuId(null)
-              }}
-              className="flex w-full items-center gap-2 px-4 py-2 text-left hover:bg-gray-50"
-            >
-              <span role="img" aria-label="candidatos">👥</span>
-              Ver Candidatos
-            </button>
-            <button
-              onClick={(event) => {
-                event.stopPropagation()
-                setEditingJobId(job.id)
-                setOpenMenuId(null)
-              }}
-              className="flex w-full items-center gap-2 px-4 py-2 text-left hover:bg-gray-50"
-            >
-              <span role="img" aria-label="editar">✏️</span>
-              Editar
-            </button>
-            <button
-              onClick={(event) => {
-                event.stopPropagation()
-                handleDuplicate(job.id)
-                setOpenMenuId(null)
-              }}
-              className="flex w-full items-center gap-2 px-4 py-2 text-left hover:bg-gray-50"
-            >
-              <span role="img" aria-label="duplicar">📄</span>
-              Duplicar
-            </button>
-            <button
-              onClick={(event) => {
-                event.stopPropagation()
-                handleTogglePause(job)
-                setOpenMenuId(null)
-              }}
-              className="flex w-full items-center gap-2 px-4 py-2 text-left hover:bg-gray-50"
-            >
-              <span role="img" aria-label="pausar">⏸️</span>
-              {job.status === 'paused' ? 'Reativar' : 'Pausar'}
-            </button>
-            <div className="my-1 h-px bg-gray-200" />
-            <button
-              onClick={(event) => {
-                event.stopPropagation()
-                handleDelete(job.id)
-                setOpenMenuId(null)
-              }}
-              className="flex w-full items-center gap-2 px-4 py-2 text-left text-red-600 hover:bg-red-50"
-            >
-              <span role="img" aria-label="excluir">🗑️</span>
-              Excluir
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
 
   return (
-    <div className="min-h-screen space-y-12 bg-[hsl(var(--background))] pb-12">
-      <section className="w-full rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 px-6 py-8 shadow-[0_26px_55px_-40px_rgba(15,23,42,0.5)] sm:px-8 lg:px-10">
-        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-3">
-            <span className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Dashboard / Vagas</span>
-            <h1 className="text-3xl font-semibold tracking-tight text-[hsl(var(--foreground))] sm:text-4xl">Gerenciar Vagas</h1>
-            <p className="text-sm text-[hsl(var(--muted-foreground))]">Gerencie todas as vagas em um só lugar</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <button className="btn btn-outline px-6 py-3 text-sm sm:text-base">
-              Exportar
-            </button>
-            <Link href="/jobs/new" className="btn btn-primary px-6 py-3 text-sm sm:text-base">
-              Nova Vaga
-            </Link>
-          </div>
+    <div className="space-y-4 sm:space-y-6">
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Vagas</h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">Gerencie todas as vagas em um só lugar</p>
         </div>
-      </section>
+        <Link 
+          href="/jobs/new" 
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 sm:px-5 py-2 sm:py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-600 w-full sm:w-auto"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          Nova Vaga
+        </Link>
+      </div>
 
-      <section className="space-y-10">
-        <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-          <div className="rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
-            <p className="text-sm font-medium text-[hsl(var(--muted-foreground))]">Total de Vagas</p>
-            <p className="mt-3 text-3xl font-semibold tracking-tight text-[hsl(var(--foreground))] sm:text-4xl">{stats?.total_jobs ?? '—'}</p>
-            <p className="mt-2 text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">+2 esta semana</p>
+      {/* 4 Cards de métricas */}
+      <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
+        {/* Vagas Ativas */}
+        <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs sm:text-sm font-medium text-gray-500">Vagas Ativas</span>
+            <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
           </div>
-          <div className="rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
-            <p className="text-sm font-medium text-[hsl(var(--muted-foreground))]">Vagas Ativas</p>
-            <p className="mt-3 text-3xl font-semibold tracking-tight text-[hsl(var(--foreground))] sm:text-4xl">{stats?.active_jobs ?? '—'}</p>
-            <p className="mt-2 text-xs uppercase tracking-wide text-[hsl(var(--primary))]">Recebendo candidatos</p>
+          <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-bold text-gray-900">
+            {loading ? '...' : overview?.active_jobs ?? 0}
           </div>
-          <div className="rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
-            <p className="text-sm font-medium text-[hsl(var(--muted-foreground))]">Candidatos</p>
-            <p className="mt-3 text-3xl font-semibold tracking-tight text-[hsl(var(--foreground))] sm:text-4xl">{stats?.total_candidates ?? '—'}</p>
-            <p className="mt-2 text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Total de aplicações</p>
+          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-gray-500">
+            +{overview?.jobs_this_week ?? 0} esta semana
           </div>
         </div>
 
-        <div className="rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_26px_55px_-40px_rgba(15,23,42,0.5)] sm:p-8">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              className={`btn px-4 py-2 text-sm sm:text-base ${viewMode === 'table' ? 'bg-[hsl(var(--foreground))] text-[hsl(var(--background))]' : 'btn-outline'}`}
-              onClick={() => setViewMode('table')}
-              aria-label="Exibir em tabela"
-            >
-              <span aria-hidden className="text-lg leading-none">≣</span>
-            </button>
-              <button
-                className={`btn px-5 py-2.5 text-sm sm:text-base ${viewMode === 'cards' ? 'bg-[hsl(var(--foreground))] text-[hsl(var(--background))]' : 'btn-outline'}`}
-                onClick={() => setViewMode('cards')}
-              >
-                Cards
-              </button>
-            </div>
-            <div className="flex w-full flex-col gap-3 lg:w-auto lg:flex-row lg:items-center lg:gap-4">
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar vagas..."
-                className="w-full rounded-2xl border border-[hsl(var(--border))] px-4 py-2.5 text-sm text-[hsl(var(--foreground))] focus:border-[hsl(var(--ring))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]/30 lg:w-80 xl:w-[26rem]"
-              />
-              <select
-                className="w-full rounded-2xl border border-[hsl(var(--border))] px-4 py-2.5 text-sm text-[hsl(var(--foreground))] focus:border-[hsl(var(--ring))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]/30 lg:w-64"
-                value={statusFilter}
-                onChange={(e) => {
-                  setStatusFilter(e.target.value as 'open' | 'paused' | 'closed' | '')
-                  setPage(1)
-                }}
-              >
-                <option value="">Todos os status</option>
-                <option value="open">Ativa</option>
-                <option value="paused">Pausada</option>
-                <option value="closed">Encerrada</option>
-              </select>
-              <button onClick={applyFilters} className="btn btn-outline px-6 py-2.5 text-sm sm:text-base">
-                Aplicar
-              </button>
-            </div>
+        {/* Total de Candidatos */}
+        <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">Candidatos</span>
+            <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
           </div>
+          <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-bold text-gray-900">
+            {loading ? '...' : overview?.total_candidates ?? 0}
+          </div>
+          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-gray-500">
+            +{overview?.candidates_today ?? 0} hoje
+          </div>
+        </div>
 
-          {viewMode === 'cards' ? (
-            error ? (
-              <div className="mt-6 w-full rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-10 text-center text-sm text-[hsl(var(--muted-foreground))]">{error}</div>
-            ) : filteredJobs.length === 0 ? (
-              <div className="mt-6 w-full rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-10 text-center text-sm text-[hsl(var(--muted-foreground))]">Nenhuma vaga encontrada.</div>
-            ) : (
-              <div className="mt-8 grid gap-8 sm:grid-cols-2 xl:grid-cols-3">
-                {filteredJobs.map((job) => {
-                  const jobHref = `/jobs/${job.id}`
-                  return (
-                    <div key={job.id} className="relative">
-                      <Link
-                        href={jobHref}
-                        className="group block h-full rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-6 shadow-[0_24px_45px_-32px_rgba(15,23,42,0.45)] transition hover:-translate-y-1 hover:shadow-[0_28px_55px_-34px_rgba(15,23,42,0.55)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
-                      >
-                        <div className="space-y-2 pr-8">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">{job.department || 'Sem departamento'}</p>
-                          <p className="text-xl font-semibold tracking-tight text-[hsl(var(--foreground))] group-hover:text-[hsl(var(--foreground))]/90">{job.title}</p>
-                          {job.salary && <p className="text-sm text-[hsl(var(--muted-foreground))]">{job.salary}</p>}
-                          {job.description && <p className="text-sm text-[hsl(var(--muted-foreground))] line-clamp-3">{job.description}</p>}
-                        </div>
-                        <div className="mt-6 grid grid-cols-2 gap-4 text-sm text-[hsl(var(--muted-foreground))]">
-                          <div>
-                            <p className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Status</p>
-                            <span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses[job.status]}`}>
-                              {statusLabels[job.status]}
-                            </span>
-                          </div>
-                          <div>
-                            <p className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Candidatos</p>
-                            <p className="mt-1 text-base font-semibold text-[hsl(var(--foreground))]">{job.applications_count ?? 0}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Localização</p>
-                            <p className="mt-1 text-sm text-[hsl(var(--foreground))]">{job.location || '—'}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Publicada</p>
-                            <p className="mt-1 text-sm text-[hsl(var(--foreground))]">{formatDate(job.created_at)}</p>
-                          </div>
-                        </div>
-                      </Link>
-                      <div className="absolute right-4 top-4">{renderActions(job)}</div>
-                    </div>
-                  )
-                })}
+        {/* Tempo Médio */}
+        <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">Tempo Médio</span>
+            <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-bold text-gray-900">
+            {loading ? '...' : `${overview?.avg_time_days ?? 0}d`}
+          </div>
+          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-emerald-600">
+            Contratação
+          </div>
+        </div>
+
+        {/* Taxa de Sucesso */}
+        <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">Sucesso</span>
+            <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-bold text-gray-900">
+            {loading ? '...' : `${overview?.success_rate ?? 0}%`}
+          </div>
+          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-emerald-600">
+            Preenchidas
+          </div>
+        </div>
+      </div>
+
+      {/* Duas colunas: Vagas Recentes e Análise de Performance */}
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+        {/* Vagas Recentes */}
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="border-b border-gray-100 px-4 sm:px-6 py-3 sm:py-4">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Vagas Recentes</h2>
+            <p className="text-xs sm:text-sm text-gray-500">Suas vagas mais ativas</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {loading ? (
+              <div className="px-4 sm:px-6 py-6 sm:py-8 text-center text-sm text-gray-500">Carregando...</div>
+            ) : (overview?.recent_jobs?.length ?? 0) === 0 ? (
+              <div className="px-4 sm:px-6 py-6 sm:py-8 text-center text-sm text-gray-500">
+                Nenhuma vaga cadastrada ainda
               </div>
-            )
+            ) : (
+              overview!.recent_jobs.map((job) => (
+                <div
+                  key={job.id}
+                  className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 transition-colors hover:bg-gray-50 gap-2 sm:gap-4"
+                >
+                  <Link href={`/jobs/${job.id}/stages`} className="flex-1 min-w-0">
+                    <div className="font-medium text-gray-900 text-sm sm:text-base truncate">{job.title}</div>
+                    <div className="text-xs sm:text-sm text-gray-500 truncate">
+                      {job.candidate_count} candidato{job.candidate_count !== 1 ? 's' : ''} • {formatRelative(job.created_at)}
+                    </div>
+                  </Link>
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+                    <span className={`hidden sm:inline-flex items-center rounded-full px-2 sm:px-2.5 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium ${
+                      job.status === 'open' 
+                        ? 'bg-emerald-100 text-emerald-700' 
+                        : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {job.status === 'open' ? 'Ativa' : 'Em Análise'}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setEditingJobId(job.id)
+                      }}
+                      className="text-gray-400 hover:text-gray-600 p-1"
+                      title="Editar"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDelete(job.id)
+                      }}
+                      className="text-gray-400 hover:text-red-600 p-1"
+                      title="Excluir"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Análise de Performance */}
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="border-b border-gray-100 px-4 sm:px-6 py-3 sm:py-4">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Análise de Performance</h2>
+            <p className="text-xs sm:text-sm text-gray-500">Métricas dos últimos 30 dias</p>
+          </div>
+          <div className="space-y-4 sm:space-y-5 p-4 sm:p-6">
+            {/* Tempo de Triagem */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                <span className="text-xs sm:text-sm text-gray-700">Tempo de Triagem</span>
+                <span className="text-xs sm:text-sm font-medium text-emerald-600">-65%</span>
+              </div>
+              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
+                <div className="h-1.5 sm:h-2 rounded-full bg-gray-800" style={{ width: '75%' }}></div>
+              </div>
+            </div>
+
+            {/* Qualidade das Contratações */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                <span className="text-xs sm:text-sm text-gray-700">Qualidade das Contratações</span>
+                <span className="text-xs sm:text-sm font-medium text-emerald-600">+42%</span>
+              </div>
+              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
+                <div className="h-1.5 sm:h-2 rounded-full bg-emerald-500" style={{ width: '85%' }}></div>
+              </div>
+            </div>
+
+            {/* Satisfação dos Candidatos */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                <span className="text-xs sm:text-sm text-gray-700">Satisfação dos Candidatos</span>
+                <span className="text-xs sm:text-sm font-medium text-gray-600">4.8/5</span>
+              </div>
+              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
+                <div className="h-1.5 sm:h-2 rounded-full bg-emerald-500" style={{ width: '96%' }}></div>
+              </div>
+            </div>
+
+            {/* ROI do Processo */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                <span className="text-xs sm:text-sm text-gray-700">ROI do Processo</span>
+                <span className="text-xs sm:text-sm font-medium text-emerald-600">+285%</span>
+              </div>
+              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
+                <div className="h-1.5 sm:h-2 rounded-full bg-gray-800" style={{ width: '100%' }}></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Ranking de Candidatos */}
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="border-b border-gray-100 px-4 sm:px-6 py-3 sm:py-4">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900">Ranking de Candidatos</h2>
+          <p className="text-xs sm:text-sm text-gray-500">Top candidatos ordenados por pontuação</p>
+        </div>
+        <div className="p-4 sm:p-6">
+          {loadingRanking ? (
+            <div className="text-center py-6 sm:py-8 text-sm text-gray-500">Carregando ranking...</div>
+          ) : ranking.length === 0 ? (
+            <div className="text-center py-6 sm:py-8 text-gray-500">
+              <p className="text-sm">Nenhum candidato com pontuação ainda.</p>
+              <p className="text-xs sm:text-sm mt-1">Analise candidatos com IA para ver o ranking aqui.</p>
+            </div>
           ) : (
-            <div className="mt-8 w-full overflow-x-auto">
-              <table className="min-w-full table-auto text-sm sm:text-base">
-                <thead className="bg-[hsl(var(--muted))] text-left text-[hsl(var(--muted-foreground))]">
-                  <tr>
-                    <th className="py-3 px-5 sm:py-4 sm:px-6">Vaga</th>
-                    <th className="hidden py-3 px-5 sm:py-4 sm:px-6 lg:table-cell">Departamento</th>
-                    <th className="hidden py-3 px-5 sm:py-4 sm:px-6 xl:table-cell">Localização</th>
-                    <th className="py-3 px-5 sm:py-4 sm:px-6">Status</th>
-                    <th className="py-3 px-5 sm:py-4 sm:px-6">Candidatos</th>
-                    <th className="py-3 px-5 sm:py-4 sm:px-6">Publicada</th>
-                    <th className="whitespace-nowrap py-3 px-5 sm:py-4 sm:px-6 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-[hsl(var(--card))]">
-                  {error ? (
-                    <tr>
-                      <td colSpan={7} className="py-10 text-center text-sm text-[hsl(var(--muted-foreground))]">{error}</td>
-                    </tr>
-                  ) : filteredJobs.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-10 text-center text-sm text-[hsl(var(--muted-foreground))]">Nenhuma vaga encontrada.</td>
-                    </tr>
-                  ) : (
-                    filteredJobs.map((job) => (
-                      <tr key={job.id} className="border-b border-[hsl(var(--border))] hover:bg-[hsl(var(--muted))]/60">
-                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top">
-                          <Link
-                            href={`/jobs/${job.id}`}
-                            className="font-medium text-[hsl(var(--foreground))] hover:text-[hsl(var(--foreground))]/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
-                          >
-                            {job.title}
-                          </Link>
-                          {job.salary && <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{job.salary}</p>}
-                          {job.description && <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))] line-clamp-1">{job.description}</p>}
-                        </td>
-                        <td className="hidden py-4 px-5 sm:py-5 sm:px-6 align-top lg:table-cell">{job.department || '—'}</td>
-                        <td className="hidden py-4 px-5 sm:py-5 sm:px-6 align-top xl:table-cell">{job.location || '—'}</td>
-                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top">
-                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses[job.status]}`}>
-                            {statusLabels[job.status]}
-                          </span>
-                        </td>
-                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top">
-                          <p className="text-sm font-medium text-[hsl(var(--foreground))]">{job.applications_count ?? 0}</p>
-                          <p className="text-xs text-[hsl(var(--muted-foreground))]">candidato(s)</p>
-                        </td>
-                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top">{formatDate(job.created_at)}</td>
-                        <td className="py-4 px-5 sm:py-5 sm:px-6 align-top text-right">
-                          {renderActions(job)}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+            <div className="space-y-2 sm:space-y-3">
+              {ranking.map((item, index) => {
+                const position = index + 1
+                const scorePercent = Math.min((item.averageScore / 10) * 100, 100)
+                
+                const getBadgeStyle = (pos: number) => {
+                  if (pos === 1) return 'bg-yellow-400 text-yellow-900'
+                  if (pos === 2) return 'bg-gray-300 text-gray-800'
+                  if (pos === 3) return 'bg-orange-300 text-orange-900'
+                  return 'bg-gray-100 text-gray-600'
+                }
+                
+                return (
+                  <Link
+                    key={`${item.candidate.id}-${item.job.id}`}
+                    href={`/jobs/${item.job.id}/stages`}
+                    className="flex items-center gap-2 sm:gap-4 rounded-lg border border-gray-100 bg-white p-3 sm:p-4 transition hover:border-gray-300 hover:shadow-sm active:bg-gray-50"
+                  >
+                    <div className={`flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-full text-xs sm:text-sm font-bold flex-shrink-0 ${getBadgeStyle(position)}`}>
+                      {position}
+                    </div>
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-900 text-sm sm:text-base truncate">{item.candidate.name}</div>
+                      <div className="text-xs sm:text-sm text-gray-500 truncate">
+                        {item.job.title} • {item.currentStage}
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col items-end gap-0.5 sm:gap-1 w-14 sm:w-20 flex-shrink-0">
+                      <span className="text-lg sm:text-xl font-bold text-blue-600">
+                        {item.averageScore.toFixed(1)}
+                      </span>
+                      <div className="w-full h-1 sm:h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-blue-600 rounded-full"
+                          style={{ width: `${scorePercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  </Link>
+                )
+              })}
             </div>
           )}
         </div>
+      </div>
 
-        {total > pageSize && (
-          <div className="flex flex-wrap items-center justify-center gap-4 pt-4 sm:gap-6 sm:pt-6">
-            <button
-              disabled={page <= 1}
-              onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-              className="btn btn-outline px-5 py-2.5 text-sm sm:px-6 sm:py-3 sm:text-base disabled:opacity-50"
-            >
-              ← Anterior
-            </button>
-            <span className="text-sm text-[hsl(var(--muted-foreground))] sm:text-base">
-              Página {page} de {Math.max(1, Math.ceil(total / pageSize))}
-            </span>
-            <button
-              disabled={page >= Math.ceil(total / pageSize)}
-              onClick={() => setPage((prev) => prev + 1)}
-              className="btn btn-outline px-5 py-2.5 text-sm sm:px-6 sm:py-3 sm:text-base disabled:opacity-50"
-            >
-              Próxima →
-            </button>
-          </div>
-        )}
-      </section>
+      {/* Ações Rápidas */}
+      <div className="rounded-xl border border-gray-200 bg-white p-4 sm:p-6 shadow-sm">
+        <div className="mb-3 sm:mb-4">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900">Ações Rápidas</h2>
+          <p className="text-xs sm:text-sm text-gray-500">Acesse rapidamente as funcionalidades mais usadas</p>
+        </div>
+        <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
+          <Link
+            href="/jobs/new"
+            className="flex flex-col items-center justify-center gap-1.5 sm:gap-2 rounded-lg border border-gray-200 bg-white p-4 sm:p-6 text-center transition-colors hover:border-gray-300 hover:bg-gray-50 active:bg-gray-100"
+          >
+            <svg className="h-5 w-5 sm:h-6 sm:w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
+            </svg>
+            <span className="font-medium text-gray-700 text-xs sm:text-sm">Nova Vaga</span>
+          </Link>
+
+          <Link
+            href="/candidates"
+            className="flex flex-col items-center justify-center gap-1.5 sm:gap-2 rounded-lg border border-gray-200 bg-white p-4 sm:p-6 text-center transition-colors hover:border-gray-300 hover:bg-gray-50 active:bg-gray-100"
+          >
+            <svg className="h-5 w-5 sm:h-6 sm:w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <span className="font-medium text-gray-700 text-xs sm:text-sm">Candidatos</span>
+          </Link>
+
+          <Link
+            href="/reports"
+            className="flex flex-col items-center justify-center gap-1.5 sm:gap-2 rounded-lg border border-gray-200 bg-white p-4 sm:p-6 text-center transition-colors hover:border-gray-300 hover:bg-gray-50 active:bg-gray-100"
+          >
+            <svg className="h-5 w-5 sm:h-6 sm:w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            <span className="font-medium text-gray-700 text-xs sm:text-sm">Relatórios</span>
+          </Link>
+
+          <button
+            onClick={() => {
+              alert('Funcionalidade em desenvolvimento')
+            }}
+            className="flex flex-col items-center justify-center gap-1.5 sm:gap-2 rounded-lg border border-gray-200 bg-white p-4 sm:p-6 text-center transition-colors hover:border-gray-300 hover:bg-gray-50 active:bg-gray-100"
+          >
+            <svg className="h-5 w-5 sm:h-6 sm:w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            <span className="font-medium text-gray-700 text-xs sm:text-sm">Exportar</span>
+          </button>
+        </div>
+      </div>
 
       {editingJobId && (
         <EditJobModal
           jobId={editingJobId}
           onClose={() => setEditingJobId(null)}
           onSaved={() => {
-            fetchJobs()
-            fetchStats()
+            loadOverview()
           }}
         />
       )}
     </div>
   )
 }
-
-

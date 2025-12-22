@@ -17,6 +17,7 @@ type StageForm = {
   threshold: number
   stage_weight: number
   order_index: number
+  analysis_type: 'resume' | 'transcript'
 }
 
 type JobFormState = {
@@ -75,15 +76,17 @@ const travelOptions = [
   'Sim, disponível',
 ]
 
+const STEPS: Array<{ key: 'basic' | 'details' | 'process'; title: string; description: string }> = [
+  { key: 'basic', title: 'Informações Básicas', description: 'Título e dados gerais' },
+  { key: 'details', title: 'Detalhes da Vaga', description: 'Responsabilidades e requisitos' },
+  { key: 'process', title: 'Processo Seletivo', description: 'Etapas e candidatos' },
+]
+
 export default function NewJobPage() {
   const router = useRouter()
   const { notify } = useToast()
 
-  const steps: Array<{ key: 'basic' | 'details' | 'process'; title: string; description: string }> = [
-    { key: 'basic', title: 'Informações Básicas', description: 'Título e dados gerais' },
-    { key: 'details', title: 'Detalhes da Vaga', description: 'Responsabilidades e requisitos' },
-    { key: 'process', title: 'Processo Seletivo', description: 'Etapas e candidatos' },
-  ]
+  const steps = STEPS
 
   const [activeTab, setActiveTab] = useState<'basic' | 'details' | 'process'>('basic')
   const [status, setStatus] = useState<'open' | 'closed'>('open')
@@ -117,6 +120,7 @@ export default function NewJobPage() {
     description: '',
     threshold: 7,
     stage_weight: 1,
+    analysis_type: 'resume' as 'resume' | 'transcript',
   })
 
   const [availableCandidates, setAvailableCandidates] = useState<Candidate[]>([])
@@ -133,25 +137,46 @@ export default function NewJobPage() {
     })
   }, [availableCandidates, candidateSearchTerm])
 
-  const currentStepIndex = steps.findIndex((step) => step.key === activeTab)
+  // Mapeamento direto de step para índice para evitar problemas com findIndex
+  const stepIndexMap: Record<'basic' | 'details' | 'process', number> = {
+    basic: 0,
+    details: 1,
+    process: 2,
+  }
+  
+  const currentStepIndex = stepIndexMap[activeTab]
 
   const goToStep = (step: 'basic' | 'details' | 'process') => {
     setActiveTab(step)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const goToNextStep = () => {
-    if (currentStepIndex < steps.length - 1) {
-      setActiveTab(steps[currentStepIndex + 1].key)
-      window.scrollTo({ top: 0, behavior: 'smooth' })
+  const goToNextStep = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    if (activeTab === 'basic') {
+      setActiveTab('details')
+    } else if (activeTab === 'details') {
+      setActiveTab('process')
     }
+    // Se já estiver no 'process', não faz nada (não deveria chegar aqui)
+    
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const goToPreviousStep = () => {
-    if (currentStepIndex > 0) {
-      setActiveTab(steps[currentStepIndex - 1].key)
-      window.scrollTo({ top: 0, behavior: 'smooth' })
+  const goToPreviousStep = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    if (activeTab === 'process') {
+      setActiveTab('details')
+    } else if (activeTab === 'details') {
+      setActiveTab('basic')
     }
+    // Se já estiver no 'basic', não faz nada (não deveria chegar aqui)
+    
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   useEffect(() => {
@@ -249,10 +274,11 @@ export default function NewJobPage() {
           threshold: stageInput.threshold,
           stage_weight: stageInput.stage_weight,
           order_index: f.stages.length,
+          analysis_type: stageInput.analysis_type,
         },
       ],
     }))
-    setStageInput({ name: '', description: '', threshold: 7, stage_weight: 1 })
+    setStageInput({ name: '', description: '', threshold: 7, stage_weight: 1, analysis_type: 'resume' })
     notify({ title: 'Etapa adicionada', variant: 'success' })
   }
 
@@ -280,17 +306,9 @@ export default function NewJobPage() {
               <p className="text-sm text-gray-600">Configure todos os detalhes da vaga e processo seletivo</p>
             </div>
           </div>
-          <button
-            type="submit"
-            form="job-create-form"
-            className="inline-flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-60"
-            disabled={submitting}
-          >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            {submitting ? 'Salvando...' : 'Salvar Vaga'}
-          </button>
+          <div className="text-sm text-gray-500">
+            Passo {currentStepIndex + 1} de {steps.length}: <span className="font-medium text-gray-700">{steps[currentStepIndex]?.title}</span>
+          </div>
         </div>
 
         <div className="-mx-4 md:-mx-8 pb-12">
@@ -364,7 +382,17 @@ export default function NewJobPage() {
             </button>
           </div>
 
-          <form id="job-create-form" onSubmit={handleSubmit} className="space-y-8">
+          <form 
+            id="job-create-form" 
+            onSubmit={handleSubmit} 
+            className="space-y-8"
+            onKeyDown={(e) => {
+              // Prevenir submissão ao pressionar Enter, exceto em textareas
+              if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+                e.preventDefault()
+              }
+            }}
+          >
             {activeTab === 'basic' && (
               <section className="space-y-6">
                 <div className="space-y-2">
@@ -664,6 +692,39 @@ export default function NewJobPage() {
                         className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
                       />
                     </div>
+                    <div className="lg:col-span-4 flex flex-col gap-2">
+                      <label className="text-xs uppercase tracking-wide text-gray-500">Tipo de Análise</label>
+                      <div className="flex items-center gap-6">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="analysis_type"
+                            value="resume"
+                            checked={stageInput.analysis_type === 'resume'}
+                            onChange={() => setStageInput((s) => ({ ...s, analysis_type: 'resume' }))}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                          />
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-gray-700">📄 Análise de Currículo</span>
+                            <span className="text-xs text-gray-500">A IA analisará o currículo do candidato</span>
+                          </div>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="analysis_type"
+                            value="transcript"
+                            checked={stageInput.analysis_type === 'transcript'}
+                            onChange={() => setStageInput((s) => ({ ...s, analysis_type: 'transcript' }))}
+                            className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300"
+                          />
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-gray-700">🎤 Análise de Transcrição</span>
+                            <span className="text-xs text-gray-500">A IA analisará a transcrição de uma entrevista</span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
                     <div className="lg:col-span-4">
                       <button type="button" onClick={addStage} className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
                         + Adicionar Etapa
@@ -677,7 +738,16 @@ export default function NewJobPage() {
                         {form.stages.map((stage, idx) => (
                           <div key={idx} className="flex items-start justify-between rounded-lg border border-gray-200 px-4 py-3 bg-white">
                             <div className="space-y-1">
-                              <div className="text-sm font-medium text-gray-900">{idx + 1}. {stage.name}</div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-gray-900">{idx + 1}. {stage.name}</span>
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  stage.analysis_type === 'transcript' 
+                                    ? 'bg-purple-100 text-purple-700' 
+                                    : 'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {stage.analysis_type === 'transcript' ? '🎤 Transcrição' : '📄 Currículo'}
+                                </span>
+                              </div>
                               {stage.description && <p className="text-xs text-gray-600 whitespace-pre-line">{stage.description}</p>}
                               <div className="flex items-center gap-2 text-xs text-gray-500">
                                 <span>Nota mínima: {stage.threshold}</span>
@@ -727,10 +797,10 @@ export default function NewJobPage() {
                           <div className="max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white">
                             <div className="divide-y divide-gray-200">
                               {filteredCandidates.map((candidate) => {
-                                const selected = selectedCandidateIds.includes(candidate.id)
-                                return (
+                          const selected = selectedCandidateIds.includes(candidate.id)
+                          return (
                                   <label
-                                    key={candidate.id}
+                              key={candidate.id}
                                     className={`flex cursor-pointer items-center gap-3 px-4 py-3 transition ${selected ? 'bg-gray-900 text-white' : 'hover:bg-gray-50'}`}
                                   >
                                     <input
@@ -745,7 +815,7 @@ export default function NewJobPage() {
                                           }
                                           return ids.filter((id) => id !== candidate.id)
                                         })
-                                      }}
+                              }}
                                     />
                                     <div className="min-w-0 flex-1">
                                       <p className="truncate text-sm font-semibold">{candidate.name || 'Sem nome informado'}</p>
@@ -754,9 +824,9 @@ export default function NewJobPage() {
                                       )}
                                     </div>
                                   </label>
-                                )
-                              })}
-                            </div>
+                          )
+                        })}
+                      </div>
                           </div>
                         )}
                       </>
@@ -774,7 +844,8 @@ export default function NewJobPage() {
               Passo {currentStepIndex + 1} de {steps.length}
             </div>
             <div className="flex items-center gap-3 justify-end">
-              {currentStepIndex > 0 && (
+              {/* Botão Voltar - aparece nos passos 2 e 3 */}
+              {activeTab !== 'basic' && (
                 <button
                   type="button"
                   onClick={goToPreviousStep}
@@ -783,7 +854,8 @@ export default function NewJobPage() {
                   Voltar
                 </button>
               )}
-              {currentStepIndex < steps.length - 1 ? (
+              {/* Botão Avançar - aparece nos passos 1 e 2 */}
+              {activeTab !== 'process' && (
                 <button
                   type="button"
                   onClick={goToNextStep}
@@ -794,7 +866,9 @@ export default function NewJobPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
-              ) : (
+              )}
+              {/* Botão Salvar - aparece apenas no passo 3 */}
+              {activeTab === 'process' && (
                 <button
                   type="submit"
                   form="job-create-form"

@@ -5,10 +5,9 @@ import { useToast } from '@/components/ToastProvider'
 import StageAnalysisPanel from './_components/StageAnalysisPanel'
 import JobStageHeader from './_components/JobStageHeader'
 import CandidatesTable from './_components/CandidatesTable'
-import BulkActions from './_components/BulkActions'
 import CandidatesFilters, { CandidateFilters as CF } from './_components/CandidatesFilters'
 
-type Stage = { id: string; name: string; description: string | null; order_index: number; threshold: number; stage_weight: number }
+type Stage = { id: string; name: string; description: string | null; order_index: number; threshold: number; stage_weight: number; analysis_type?: 'resume' | 'transcript' }
 type Candidate = { id: string; name: string; email?: string }
 type PromptTemplate = { id: string; name: string; is_default: boolean }
 type StageAnalysisResult = {
@@ -116,7 +115,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [jobInfo, setJobInfo] = useState<{ id: string; title: string } | null>(null)
   const [creating, setCreating] = useState(false)
   const [activeTab, setActiveTab] = useState<string | null>(null)
-  const [activeMainTab, setActiveMainTab] = useState<'candidatos' | 'etapas'>('candidatos')
+  const [activeMainTab, setActiveMainTab] = useState<'candidatos' | 'etapas' | 'analytics'>('candidatos')
   const [board, setBoard] = useState<{ lanes: Record<string, { application_id: string; application_stage_id: string; candidate: any; score: number | null }[]>, stages: Stage[] } | null>(null)
   const [selectedForBulk, setSelectedForBulk] = useState<Record<string, boolean>>({})
   const [filters, setFilters] = useState<CF>({ query: '' })
@@ -127,8 +126,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
 
   // Candidates assigned to the job (simplificado: todos candidatos do tenant)
   const [candidates, setCandidates] = useState<Candidate[]>([])
-  const [candidateSearch, setCandidateSearch] = useState('')
-  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([])
   const [applications, setApplications] = useState<any[]>([])
   
   // Candidato selecionado para cada etapa
@@ -140,6 +137,22 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [analysisLoading, setAnalysisLoading] = useState<Record<string, boolean>>({})
   const [analysisExpanded, setAnalysisExpanded] = useState<Record<string, boolean>>({})
   const pollingTimeouts = useRef<Record<string, number>>({})
+  
+  // Estado para atribuição de candidatos
+  const [candidateSearchQuery, setCandidateSearchQuery] = useState('')
+  const [selectedCandidatesToAssign, setSelectedCandidatesToAssign] = useState<Record<string, boolean>>({})
+  const [assigningCandidates, setAssigningCandidates] = useState(false)
+  const [showCandidateAssignment, setShowCandidateAssignment] = useState(false)
+  
+  // Estado para modal de adicionar etapa
+  const [showAddStageModal, setShowAddStageModal] = useState(false)
+  const [newStageForm, setNewStageForm] = useState({
+    name: '',
+    description: '',
+    threshold: 7,
+    stage_weight: 1,
+    analysis_type: 'resume' as 'resume' | 'transcript'
+  })
 
   const clearStagePolling = useCallback((stageId: string) => {
     const existing = pollingTimeouts.current[stageId]
@@ -319,6 +332,35 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     }
   }
 
+  async function handleAddStage(e: React.FormEvent) {
+    e.preventDefault()
+    if (!jobId) return
+    if (!newStageForm.name.trim()) {
+      notify({ title: 'Nome obrigatório', description: 'Informe um nome para a etapa.', variant: 'error' })
+      return
+    }
+    setCreating(true)
+    try {
+      await api<{ id: string }>(`/api/jobs/${jobId}/stages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newStageForm,
+          order_index: stages.length, // adiciona no final
+        }),
+      })
+      const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`)
+      setStages(items)
+      setNewStageForm({ name: '', description: '', threshold: 7, stage_weight: 1, analysis_type: 'resume' })
+      setShowAddStageModal(false)
+      notify({ title: 'Etapa criada com sucesso!', variant: 'success' })
+    } catch (error: any) {
+      notify({ title: 'Erro ao criar etapa', description: error?.message, variant: 'error' })
+    } finally {
+      setCreating(false)
+    }
+  }
+
   // Função para obter application_id de um candidato específico
   const getApplicationId = useCallback((candidateId: string | null) => {
     if (!candidateId) return null
@@ -452,97 +494,89 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     loadAnalysisForStage(stageId, candidateId)
   }, [clearStagePolling, loadAnalysisForStage])
 
-  useEffect(() => {
-    setSelectedCandidateIds((prev) => prev.filter((id) => !applications.some((app) => app.candidate_id === id)))
+  
+
+  // Candidatos filtrados para atribuição (exclui os já atribuídos)
+  const assignedCandidateIds = useMemo(() => {
+    return new Set(applications.map((app) => app.candidate_id))
   }, [applications])
 
-  const availableCandidates = useMemo(
-    () => candidates.filter((c) => !applications.some((app) => app.candidate_id === c.id)),
-    [candidates, applications],
-  )
-
-  const filteredCandidates = useMemo(() => {
-    const query = candidateSearch.trim().toLowerCase()
-    if (!query) return availableCandidates
-    return availableCandidates.filter((c) => {
-      const name = c.name?.toLowerCase() ?? ''
-      const email = c.email?.toLowerCase() ?? ''
-      return name.includes(query) || email.includes(query) || c.id.toLowerCase().includes(query)
+  const filteredCandidatesForAssignment = useMemo(() => {
+    return candidates.filter((c) => {
+      // Excluir candidatos já atribuídos
+      if (assignedCandidateIds.has(c.id)) return false
+      // Filtrar por pesquisa
+      if (candidateSearchQuery.trim()) {
+        const q = candidateSearchQuery.toLowerCase()
+        const nameMatch = c.name?.toLowerCase().includes(q)
+        const emailMatch = c.email?.toLowerCase().includes(q)
+        return nameMatch || emailMatch
+      }
+      return true
     })
-  }, [availableCandidates, candidateSearch])
+  }, [candidates, assignedCandidateIds, candidateSearchQuery])
 
-  const toggleCandidateSelection = (candidateId: string) => {
-    setSelectedCandidateIds((prev) =>
-      prev.includes(candidateId) ? prev.filter((id) => id !== candidateId) : [...prev, candidateId],
+  const selectedCandidateCount = useMemo(() => {
+    return Object.values(selectedCandidatesToAssign).filter(Boolean).length
+  }, [selectedCandidatesToAssign])
+
+  const assignCandidatesToJob = useCallback(async () => {
+    if (!jobId || selectedCandidateCount === 0) return
+    
+    const candidateIds = Object.keys(selectedCandidatesToAssign).filter(
+      (id) => selectedCandidatesToAssign[id]
     )
-  }
+    
+    setAssigningCandidates(true)
+    try {
+      // Criar applications para cada candidato selecionado
+      const results = await Promise.allSettled(
+        candidateIds.map((candidateId) =>
+          fetch('/api/applications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_id: jobId, candidate_id: candidateId }),
+          }).then((res) => res.json())
+        )
+      )
 
-  async function assignCandidate() {
-    if (!jobId || selectedCandidateIds.length === 0) return
+      const successCount = results.filter((r) => r.status === 'fulfilled').length
+      const failCount = results.filter((r) => r.status === 'rejected').length
 
-    const firstStageId = stages[0]?.id ?? null
-    let successCount = 0
+      // Recarregar applications e board
+      const apps = await api<{ items: any[] }>(`/api/jobs/${jobId}/applications`).catch(() => ({ items: [] }))
+      setApplications(apps.items || [])
+      const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
+      if (b) setBoard(b as any)
 
-    for (const candidateId of selectedCandidateIds) {
-      try {
-        const appData = await api<{ id: string }>(`/api/jobs/${jobId}/applications`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ candidate_id: candidateId }),
-        })
-        const appId = appData?.id
+      // Limpar seleção
+      setSelectedCandidatesToAssign({})
+      setCandidateSearchQuery('')
+      setShowCandidateAssignment(false)
 
-        if (appId && firstStageId) {
-          try {
-            await fetch('/api/applications/stages', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ application_id: appId, stage_id: firstStageId }),
-            })
-          } catch (error) {
-            console.error('Erro ao adicionar candidato à primeira etapa:', error)
-          }
-        }
-
-        successCount += 1
-      } catch (error: any) {
-        console.error('Erro ao atribuir candidato à vaga:', error)
+      if (failCount > 0) {
         notify({
-          title: 'Erro ao atribuir candidato',
-          description: error?.message || 'Não foi possível atribuir um dos candidatos selecionados.',
-          variant: 'error',
+          title: 'Atribuição parcial',
+          description: `${successCount} candidato(s) atribuído(s), ${failCount} erro(s).`,
+          variant: 'warning',
+        })
+      } else {
+        notify({
+          title: 'Candidatos atribuídos',
+          description: `${successCount} candidato(s) adicionado(s) à vaga.`,
+          variant: 'success',
         })
       }
-    }
-
-    const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r) => r.json()).catch(() => ({ items: [] }))
-    setApplications(apps.items || [])
-
-    const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
-    if (b) {
-      setBoard(b as any)
-    }
-
-    if (firstStageId) {
-      setActiveTab(firstStageId)
-      if (selectedCandidateIds[0]) {
-        setStageSelectedCandidates((prev) => ({ ...prev, [firstStageId]: selectedCandidateIds[0] }))
-      }
-    }
-
-    setSelectedCandidateIds([])
-
-    if (successCount > 0) {
+    } catch (error: any) {
       notify({
-        title: successCount > 1 ? 'Candidatos atribuídos' : 'Candidato atribuído',
-        description:
-          successCount > 1
-            ? `${successCount} candidatos foram movidos para o início do processo seletivo.`
-            : 'O candidato foi movido para a primeira etapa.',
-        variant: 'success',
+        title: 'Erro ao atribuir candidatos',
+        description: error?.message || 'Falha ao atribuir candidatos à vaga.',
+        variant: 'error',
       })
+    } finally {
+      setAssigningCandidates(false)
     }
-  }
+  }, [jobId, selectedCandidatesToAssign, selectedCandidateCount, notify])
 
   const removeApplication = useCallback(
     async (applicationId: string) => {
@@ -562,7 +596,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
           return
         }
         const apps = await fetch(`/api/jobs/${jobId}/applications`).then((r) => r.json()).catch(() => ({ items: [] }))
-        setApplications(apps.items || [])
+    setApplications(apps.items || [])
         const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
         if (b) {
           setBoard(b as any)
@@ -605,34 +639,34 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     <div className="min-h-screen bg-[#f7f7f7] pb-12">
       <div className="bg-white border-b border-gray-200 shadow-sm -mx-4 md:-mx-8 px-4 md:px-8 mb-8">
         <div className="flex w-full flex-col gap-4 py-6 md:flex-row md:items-center md:justify-between">
-          <div>
+        <div>
             <div className="text-sm text-gray-500">Vagas / {jobInfo?.title || 'Processo seletivo'}</div>
             <h1 className="mt-2 text-2xl font-semibold text-gray-900">{jobInfo?.title || 'Processo seletivo'}</h1>
             <p className="text-sm text-gray-600">Gerencie as etapas do processo seletivo e analise candidatos</p>
-          </div>
-          {jobId && (
-            <button
+        </div>
+        {jobId && (
+          <button
               className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-red-700 whitespace-nowrap"
               onClick={async () => {
                 if (!confirm('Excluir esta vaga e todas as etapas/candidaturas relacionadas?')) return
-                const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' })
+              const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' })
                 if (!res.ok) {
                   const t = await res.text()
-                  let msg = 'Falha ao excluir a vaga'
+                let msg = 'Falha ao excluir a vaga'
                   try {
                     const j = t ? JSON.parse(t) : null
                     msg = j?.error?.message || msg
                   } catch {}
-                  notify({ title: 'Erro', description: msg, variant: 'error' })
-                  return
-                }
-                notify({ title: 'Vaga excluída', variant: 'success' })
-                window.location.href = '/jobs'
-              }}
-            >
-              🗑️ Excluir vaga
-            </button>
-          )}
+                notify({ title: 'Erro', description: msg, variant: 'error' })
+                return
+              }
+              notify({ title: 'Vaga excluída', variant: 'success' })
+              window.location.href = '/jobs'
+            }}
+          >
+            🗑️ Excluir vaga
+          </button>
+        )}
         </div>
       </div>
 
@@ -660,111 +694,157 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
           >
             Etapas & IA
           </button>
-        </div>
+          <button
+            type="button"
+            onClick={() => setActiveMainTab('analytics')}
+            className={`px-5 py-2 text-sm font-semibold rounded-xl transition-colors ${
+              activeMainTab === 'analytics'
+                ? 'bg-gray-900 text-white shadow'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            Analytics
+          </button>
+            </div>
 
         {activeMainTab === 'candidatos' && (
           <div className="space-y-8">
-            <div className="rounded-3xl border border-gray-200 bg-white shadow-sm p-6 md:p-8">
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-gray-500">Pipeline</div>
-                  <h2 className="mt-2 text-2xl font-semibold text-gray-900">Gerenciar Candidatos</h2>
-                  <p className="text-sm text-gray-600">Acompanhe todos os candidatos desta vaga em um único painel.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled
-                    title="Função disponível em breve"
-                    className="rounded-lg bg-gray-900/70 px-4 py-2 text-sm font-semibold text-white opacity-60 cursor-not-allowed"
-                  >
-                    Exportar
-                  </button>
-                  <button
-                    type="button"
-                    disabled
-                    title="Função disponível em breve"
-                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 opacity-60 cursor-not-allowed"
-                  >
-                    Filtros
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-gray-50 to-white p-6 shadow-sm">
-                  <div className="text-sm text-gray-500">Total</div>
-                  <div className="mt-2 flex items-baseline gap-2">
-                    <span className="text-3xl font-semibold text-gray-900">{totalCandidates}</span>
-                    <span className="text-xs text-gray-500 uppercase tracking-wide">candidatos</span>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-indigo-50 to-white p-6 shadow-sm">
-                  <div className="text-sm text-gray-500">Novos</div>
-                  <div className="mt-2 flex items-baseline gap-2">
-                    <span className="text-3xl font-semibold text-indigo-600">{newCandidatesCount}</span>
-                    <span className="text-xs text-indigo-600 uppercase tracking-wide">na etapa inicial</span>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
-                  <div className="text-sm text-gray-500">Em processo</div>
-                  <div className="mt-2 flex items-baseline gap-2">
-                    <span className="text-3xl font-semibold text-emerald-600">{advancedCandidatesCount}</span>
-                    <span className="text-xs text-emerald-600 uppercase tracking-wide">etapas avançadas</span>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
-                  <div className="text-sm text-gray-500">Inativos</div>
-                  <div className="mt-2 flex items-baseline gap-2">
-                    <span className="text-3xl font-semibold text-amber-600">{inactiveCandidatesCount}</span>
-                    <span className="text-xs text-amber-600 uppercase tracking-wide">candidatos inativos</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between border-b border-gray-200 pb-6">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Atribuir candidatos à vaga</h3>
-                  <p className="text-sm text-gray-600">Selecione candidatos cadastrados para iniciar o processo seletivo.</p>
-                </div>
-                <button
-                  onClick={assignCandidate}
-                  disabled={selectedCandidateIds.length === 0}
-                  className="rounded-lg bg-green-600 px-6 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                >
-                  Atribuir à vaga
-                </button>
-              </div>
-              <div className="mt-6">
-                <label className="block text-sm font-medium text-gray-900 mb-3">Selecione os candidatos</label>
-                <select
-                  multiple
-                  className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm focus:border-gray-900/40 focus:outline-none focus:ring-2 focus:ring-gray-900/20 min-h-[160px]"
-                  value={selectedCandidateIds}
-                  onChange={(e) => setSelectedCandidateIds(Array.from(e.target.selectedOptions).map((option) => option.value))}
-                >
-                  {candidates
-                    .filter((c) => !applications.some((app) => app.candidate_id === c.id))
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} {c.email ? `(${c.email})` : ''}
-                      </option>
-                    ))}
-                </select>
-                <p className="mt-2 text-xs text-gray-500">Use Ctrl/⌘ para selecionar vários candidatos simultaneamente.</p>
-              </div>
-            </div>
-
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900">Lista de Candidatos</h3>
                   <p className="text-sm text-gray-600">Visualize o status de cada candidato e navegue para a etapa correspondente.</p>
                 </div>
-                <span className="text-sm font-medium text-gray-500">Total: {totalCandidates}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-gray-500">Total: {totalCandidates}</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowCandidateAssignment(!showCandidateAssignment)}
+                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
+                  >
+                    + Atribuir candidatos
+                  </button>
+                </div>
               </div>
+
+              {/* Painel de atribuição de candidatos */}
+              {showCandidateAssignment && (
+                <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50/50 p-5">
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">Atribuir candidatos à vaga</h4>
+                        <p className="text-sm text-gray-600">Pesquise e selecione os candidatos que deseja adicionar.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowCandidateAssignment(false)
+                          setSelectedCandidatesToAssign({})
+                          setCandidateSearchQuery('')
+                        }}
+                        className="text-gray-400 hover:text-gray-600 transition-colors"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    {/* Barra de pesquisa */}
+                    <div className="relative">
+                <input
+                        type="text"
+                        placeholder="Pesquisar candidatos por nome ou email..."
+                        value={candidateSearchQuery}
+                        onChange={(e) => setCandidateSearchQuery(e.target.value)}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 pl-10 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                      />
+                      <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+              </div>
+
+                    {/* Lista de candidatos com checkboxes */}
+                    <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                      {filteredCandidatesForAssignment.length === 0 ? (
+                        <div className="p-4 text-center text-sm text-gray-500">
+                          {candidates.length === 0
+                            ? 'Nenhum candidato cadastrado. Cadastre candidatos em "Candidatos".'
+                            : candidateSearchQuery
+                            ? 'Nenhum candidato encontrado para a pesquisa.'
+                            : 'Todos os candidatos já estão atribuídos a esta vaga.'}
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-gray-100">
+                          {filteredCandidatesForAssignment.map((candidate) => {
+                            const isSelected = selectedCandidatesToAssign[candidate.id] || false
+                            const initials = candidate.name
+                              ? candidate.name.split(' ').map((p) => p.charAt(0)).join('').slice(0, 2).toUpperCase()
+                              : candidate.id.slice(0, 2).toUpperCase()
+                            return (
+                              <label
+                                key={candidate.id}
+                                className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
+                                  isSelected ? 'bg-emerald-50' : 'hover:bg-gray-50'
+                                }`}
+                              >
+                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    setSelectedCandidatesToAssign((prev) => ({
+                                      ...prev,
+                                      [candidate.id]: e.target.checked,
+                                    }))
+                                  }}
+                                  className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                />
+                                <div className="h-8 w-8 flex items-center justify-center rounded-full bg-gray-900/5 text-xs font-semibold text-gray-700">
+                                  {initials}
+              </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-gray-900 truncate">{candidate.name || 'Sem nome'}</div>
+                                  {candidate.email && <div className="text-xs text-gray-500 truncate">{candidate.email}</div>}
+            </div>
+                              </label>
+                            )
+                          })}
+          </div>
+                      )}
+          </div>
+
+                    {/* Botões de ação */}
+                    <div className="flex items-center justify-between pt-2">
+                      <span className="text-sm text-gray-600">
+                        {selectedCandidateCount > 0
+                          ? `${selectedCandidateCount} candidato(s) selecionado(s)`
+                          : 'Nenhum candidato selecionado'}
+                      </span>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCandidatesToAssign({})
+                          }}
+                          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                          disabled={selectedCandidateCount === 0}
+                        >
+                          Limpar seleção
+                </button>
+                <button 
+                          type="button"
+                          onClick={assignCandidatesToJob}
+                          disabled={selectedCandidateCount === 0 || assigningCandidates}
+                          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {assigningCandidates ? 'Atribuindo...' : `Atribuir ${selectedCandidateCount > 0 ? `(${selectedCandidateCount})` : ''}`}
+                </button>
+              </div>
+            </div>
+          </div>
+            </div>
+              )}
 
               {candidateRows.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
@@ -803,18 +883,18 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                           typeof row.score === 'number'
                             ? `${row.score.toFixed(1)} pts`
                             : 'Sem pontuação'
-                        return (
+                return (
                           <tr key={row.applicationId} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-4">
                               <div className="flex items-center gap-3">
                                 <div className="h-10 w-10 flex items-center justify-center rounded-full bg-gray-900/5 text-sm font-semibold text-gray-700">
                                   {initials}
-                                </div>
-                                <div className="min-w-0">
+                        </div>
+                        <div className="min-w-0">
                                   <div className="font-medium text-gray-900 truncate">{row.name}</div>
                                   {row.email && <div className="text-xs text-gray-500 truncate">{row.email}</div>}
-                                </div>
-                              </div>
+                        </div>
+                      </div>
                             </td>
                             <td className="px-4 py-4">
                               <span className="text-sm font-medium text-gray-700">{row.stageName ?? 'Sem etapa'}</span>
@@ -833,7 +913,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                             <td className="px-4 py-4 text-gray-600">{formatDate(row.appliedAt)}</td>
                             <td className="px-4 py-4 text-right">
                               <div className="flex justify-end gap-2">
-                                <button
+                      <button 
                                   type="button"
                                   onClick={() => handleNavigateToStage(row.stageId ?? orderedStages[0]?.id ?? null, row.candidateId)}
                                   className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
@@ -844,25 +924,88 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                                   type="button"
                                   onClick={() => removeApplication(row.applicationId)}
                                   className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors"
-                                >
-                                  Remover
-                                </button>
-                              </div>
+                      >
+                        Remover
+                      </button>
+                    </div>
                             </td>
                           </tr>
                         )
                       })}
                     </tbody>
                   </table>
-                </div>
-              )}
             </div>
+              )}
+          </div>
+        </div>
+        )}
+
+        {activeMainTab === 'analytics' && (
+          <div className="space-y-8">
+            <div className="rounded-3xl border border-gray-200 bg-white shadow-sm p-6 md:p-8">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-gray-500">Pipeline</div>
+                  <h2 className="mt-2 text-2xl font-semibold text-gray-900">Gerenciar Candidatos</h2>
+                  <p className="text-sm text-gray-600">Acompanhe todos os candidatos desta vaga em um único painel.</p>
+              </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled
+                    title="Função disponível em breve"
+                    className="rounded-lg bg-gray-900/70 px-4 py-2 text-sm font-semibold text-white opacity-60 cursor-not-allowed"
+                  >
+                    Exportar
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    title="Função disponível em breve"
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 opacity-60 cursor-not-allowed"
+                  >
+                    Filtros
+                  </button>
+              </div>
+          </div>
+
+              <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-gray-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Total</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-gray-900">{totalCandidates}</span>
+                    <span className="text-xs text-gray-500 uppercase tracking-wide">candidatos</span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-indigo-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Novos</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-indigo-600">{newCandidatesCount}</span>
+                    <span className="text-xs text-indigo-600 uppercase tracking-wide">na etapa inicial</span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Em processo</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-emerald-600">{advancedCandidatesCount}</span>
+                    <span className="text-xs text-emerald-600 uppercase tracking-wide">etapas avançadas</span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Inativos</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-amber-600">{inactiveCandidatesCount}</span>
+                    <span className="text-xs text-amber-600 uppercase tracking-wide">candidatos inativos</span>
+                  </div>
+                </div>
+          </div>
+        </div>
 
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Painel de Candidatos (MVP)</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Ranking de Candidatos</h3>
               <Panel jobId={jobId} />
-            </div>
-          </div>
+                          </div>
+                          </div>
         )}
 
         {activeMainTab === 'etapas' && (
@@ -873,19 +1016,19 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                   <div className="text-sm text-gray-500">Total de Candidatos</div>
                   <div className="mt-2 text-3xl font-semibold text-gray-900">{applications.length}</div>
                   <div className="text-xs text-gray-400 mt-1">Atribuídos à vaga</div>
-                </div>
+                        </div>
                 <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
                   <div className="text-sm text-gray-500">Etapas</div>
                   <div className="mt-2 text-3xl font-semibold text-gray-900">{stages.length}</div>
                   <div className="text-xs text-gray-400 mt-1">No processo seletivo</div>
-                </div>
+                      </div>
                 <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
                   <div className="text-sm text-gray-500">Análises Concluídas</div>
                   <div className="mt-2 text-3xl font-semibold text-green-600">
                     {Object.values(analysisByStage).filter((a) => a?.status === 'succeeded').length}
-                  </div>
+                          </div>
                   <div className="text-xs text-green-600 mt-1">Candidatos avaliados</div>
-                </div>
+                        </div>
                 <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
                   <div className="text-sm text-gray-500">Próximas Ações</div>
                   <div className="mt-2 text-3xl font-semibold text-gray-900">
@@ -897,16 +1040,28 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
             )}
 
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="mb-6">
-                <h2 className="text-lg font-semibold text-gray-900">Etapas do Processo</h2>
-                <p className="text-sm text-gray-600">Gerencie as etapas e acompanhe o pipeline de candidatos.</p>
+              <div className="mb-6 flex items-start justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Etapas do Processo</h2>
+                  <p className="text-sm text-gray-600">Gerencie as etapas e acompanhe o pipeline de candidatos.</p>
+                  </div>
+                      <button 
+                  type="button"
+                  onClick={() => setShowAddStageModal(true)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Adicionar Etapa
+                      </button>
               </div>
 
               {stages.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
                   <p className="text-sm text-gray-600">Nenhuma etapa cadastrada.</p>
-                </div>
-              ) : (
+                    </div>
+                  ) : (
                 <div className="space-y-4">
                   <JobStageHeader
                     stages={stages}
@@ -926,32 +1081,39 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                         <div className="flex items-center gap-3 flex-1">
                           <div className="text-sm flex-1">
                             <div className="text-xs uppercase tracking-wide text-gray-500">Etapa ativa</div>
-                            <div className="font-semibold text-gray-900 mt-1">
-                              {stages.find((s) => s.id === activeTab)?.name}
-                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="font-semibold text-gray-900">
+                                {stages.find((s) => s.id === activeTab)?.name}
+                              </span>
+                              {(() => {
+                                const analysisType = stages.find((s) => s.id === activeTab)?.analysis_type
+                                return (
+                                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                                    analysisType === 'transcript' 
+                                      ? 'bg-purple-100 text-purple-700' 
+                                      : 'bg-blue-100 text-blue-700'
+                                  }`}>
+                                    {analysisType === 'transcript' ? '🎤 Transcrição' : '📄 Currículo'}
+                                  </span>
+                                )
+                              })()}
+                    </div>
                             {stages.find((s) => s.id === activeTab)?.description && (
                               <p className="text-xs text-gray-600 mt-2 whitespace-pre-wrap">
                                 {stages.find((s) => s.id === activeTab)?.description}
                               </p>
-                            )}
+                  )}
                           </div>
-                        </div>
-                        <BulkActions
-                          jobId={jobId!}
-                          stages={stages}
-                          activeStageId={activeTab}
-                          selectedIds={Object.entries(selectedForBulk)
-                            .filter(([_, v]) => v)
-                            .map(([k]) => k)}
-                          onMoved={async () => {
-                            const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
-                            if (b) {
-                              setBoard(b as any)
-                              setSelectedForBulk({})
-                            }
-                          }}
-                        />
-                      </div>
+                </div>
+              </div>
+
+                <StagePromptSelector
+                        stageId={activeTab}
+                  templates={promptTemplates}
+                        selected={stagePromptMap[activeTab] ?? null}
+                        loading={promptLoadingStage === activeTab}
+                  onChange={handleStagePromptChange}
+                />
 
                       <CandidatesFilters value={filters} onChange={setFilters} />
 
@@ -961,6 +1123,16 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                           items={(board?.lanes?.[activeTab] || []) as any}
                           selectedMap={selectedForBulk}
                           setSelectedMap={setSelectedForBulk}
+                          stages={stages}
+                          jobId={jobId!}
+                          analysisType={stages.find((s) => s.id === activeTab)?.analysis_type || 'resume'}
+                          onMoved={async () => {
+                            const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
+                            if (b) {
+                              setBoard(b as any)
+                              setSelectedForBulk({})
+                            }
+                          }}
                           onSelect={(it) => {
                             setCurrentItem({
                               application_id: it.application_id,
@@ -972,76 +1144,200 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                             window.history.replaceState({}, '', url.toString())
                           }}
                         />
-                      </div>
-                    </div>
-                  )}
                 </div>
-              )}
+              </div>
+                  )}
             </div>
+              )}
+          </div>
 
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-gray-900 mb-6">Análises de Candidatos</h2>
-              <div className="space-y-6">
-                {stages.map((s) => (
-                  <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
+        <div className="space-y-6">
+          {stages.map((s) => (
+            <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+              <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
                           <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 mt-1">
-                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
-                              Threshold: {s.threshold}
-                            </span>
-                            <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
-                              Peso: {s.stage_weight}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
+                      <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                        Threshold: {s.threshold}
+                      </span>
+                      <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
+                        Peso: {s.stage_weight}
+                      </span>
                     </div>
+                  </div>
+                </div>
+              </div>
 
-                    <div className="p-6">
-                      {(() => {
+              <div className="p-6">
+                {(() => {
                         const candidateName = stageSelectedCandidates[s.id]
                           ? candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null
                           : null
-                        const analysis = analysisByStage[s.id] || null
-                        const loading = Boolean(analysisLoading[s.id])
-
-                        console.log(`[DEBUG] Renderizando análise para etapa ${s.id}:`, {
-                          candidateName,
-                          analysis,
-                          loading,
+                  const analysis = analysisByStage[s.id] || null
+                  const loading = Boolean(analysisLoading[s.id])
+                  
+                  console.log(`[DEBUG] Renderizando análise para etapa ${s.id}:`, {
+                    candidateName,
+                    analysis,
+                    loading,
                           analysisResult: analysis?.result,
-                        })
-
-                        return (
-                          <StageAnalysisPanel
-                            candidateName={candidateName}
-                            analysis={analysis}
-                            loading={loading}
+                  })
+                  
+                  return (
+                    <StageAnalysisPanel
+                      candidateName={candidateName}
+                      analysis={analysis}
+                      loading={loading}
                             expanded={true}
                             onToggle={() => {}}
-                            onRefresh={() => {
-                              const candidateId = stageSelectedCandidates[s.id] ?? null
-                              if (candidateId) loadAnalysisForStage(s.id, candidateId)
-                            }}
-                          />
-                        )
-                      })()}
-                    </div>
-                  </div>
-                ))}
+                      onRefresh={() => {
+                        const candidateId = stageSelectedCandidates[s.id] ?? null
+                        if (candidateId) loadAnalysisForStage(s.id, candidateId)
+                      }}
+                    />
+                  )
+                })()}
               </div>
+            </div>
+          ))}
+        </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* Modal para adicionar nova etapa */}
+      {showAddStageModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">Adicionar Nova Etapa</h3>
+              <button
+                type="button"
+                onClick={() => setShowAddStageModal(false)}
+                className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <form onSubmit={handleAddStage} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Etapa *</label>
+                <input
+                  type="text"
+                  value={newStageForm.name}
+                  onChange={(e) => setNewStageForm((f) => ({ ...f, name: e.target.value }))}
+                  placeholder="Ex: Triagem de Currículos, Entrevista Técnica..."
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
+                <textarea
+                  value={newStageForm.description}
+                  onChange={(e) => setNewStageForm((f) => ({ ...f, description: e.target.value }))}
+                  placeholder="Descreva o que será avaliado nesta etapa..."
+                  rows={3}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nota Mínima (Threshold)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={0.5}
+                    value={newStageForm.threshold}
+                    onChange={(e) => setNewStageForm((f) => ({ ...f, threshold: parseFloat(e.target.value) || 0 }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Nota mínima para aprovação (0-10)</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Peso</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={newStageForm.stage_weight}
+                    onChange={(e) => setNewStageForm((f) => ({ ...f, stage_weight: parseInt(e.target.value) || 1 }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Peso da etapa no cálculo final</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Análise</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="analysis_type"
+                      value="resume"
+                      checked={newStageForm.analysis_type === 'resume'}
+                      onChange={() => setNewStageForm((f) => ({ ...f, analysis_type: 'resume' }))}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">📄 Análise de Currículo</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="analysis_type"
+                      value="transcript"
+                      checked={newStageForm.analysis_type === 'transcript'}
+                      onChange={() => setNewStageForm((f) => ({ ...f, analysis_type: 'transcript' }))}
+                      className="h-4 w-4 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-sm text-gray-700">🎤 Análise de Transcrição</span>
+                  </label>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {newStageForm.analysis_type === 'resume' 
+                    ? 'A IA analisará currículos dos candidatos nesta etapa.'
+                    : 'A IA analisará transcrições de entrevistas nesta etapa.'}
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setShowAddStageModal(false)}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating || !newStageForm.name.trim()}
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {creating ? 'Criando...' : 'Criar Etapa'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinished }: { stageId: string; applicationId: string | null; candidateName?: string; onRunFinished?: (stageId: string, runId: string, applicationStageId: string) => void }) {
+function UploadAndEvaluate({ stageId, applicationId, candidateName, analysisType = 'resume', onRunFinished }: { stageId: string; applicationId: string | null; candidateName?: string; analysisType?: 'resume' | 'transcript'; onRunFinished?: (stageId: string, runId: string, applicationStageId: string) => void }) {
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const [transcriptFile, setTranscriptFile] = useState<File | null>(null)
@@ -1247,6 +1543,28 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
         </div>
       )}
       
+      {/* Badge indicando tipo de análise */}
+      <div className={`rounded-lg p-3 border ${analysisType === 'transcript' ? 'bg-purple-50 border-purple-200' : 'bg-blue-50 border-blue-200'}`}>
+        <div className="flex items-center gap-2">
+          <span className={`text-lg ${analysisType === 'transcript' ? 'text-purple-600' : 'text-blue-600'}`}>
+            {analysisType === 'transcript' ? '🎤' : '📄'}
+          </span>
+          <div>
+            <div className={`font-medium text-sm ${analysisType === 'transcript' ? 'text-purple-900' : 'text-blue-900'}`}>
+              {analysisType === 'transcript' ? 'Análise de Transcrição' : 'Análise de Currículo'}
+            </div>
+            <div className={`text-xs ${analysisType === 'transcript' ? 'text-purple-700' : 'text-blue-700'}`}>
+              {analysisType === 'transcript' 
+                ? 'Anexe a transcrição de uma entrevista para análise pela IA'
+                : 'A IA analisará o currículo do candidato'}
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Campos para análise de CURRÍCULO */}
+      {analysisType === 'resume' && (
+        <>
       {/* Seleção de currículo já anexado */}
       {applicationId && (
         <div className="bg-gray-50 rounded-md p-4 border border-gray-200">
@@ -1263,7 +1581,6 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
                 if (value) {
                   const [path, bucket] = value.split(':')
                   setSelectedResume({ resume_path: path, resume_bucket: bucket })
-                  // Limpar upload novo se selecionar um currículo existente
                   setResumeFile(null)
                 } else {
                   setSelectedResume(null)
@@ -1272,19 +1589,16 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
               <option value="">Selecione um currículo anexado</option>
-              {availableResumes.map((resume, idx) => {
-                // Extrair nome do arquivo do resume_path (ex: "resumes/1234567-filename.pdf" -> "1234567-filename.pdf")
-                const pathParts = resume.resume_path.split('/')
-                const filename = pathParts[pathParts.length - 1]
-                // Remover timestamp do início (ex: "1234567-" -> "")
-                const displayName = filename.replace(/^\d+-/, '')
-                
-                return (
-                  <option key={idx} value={`${resume.resume_path}:${resume.resume_bucket}`}>
-                    {displayName || `Currículo ${idx + 1}`} {resume.created_at ? `(${new Date(resume.created_at).toLocaleDateString('pt-BR')})` : ''}
-                  </option>
-                )
-              })}
+                  {availableResumes.map((resume, idx) => {
+                    const pathParts = resume.resume_path.split('/')
+                    const filename = pathParts[pathParts.length - 1]
+                    const displayName = filename.replace(/^\d+-/, '')
+                    return (
+                <option key={idx} value={`${resume.resume_path}:${resume.resume_bucket}`}>
+                        {displayName || `Currículo ${idx + 1}`} {resume.created_at ? `(${new Date(resume.created_at).toLocaleDateString('pt-BR')})` : ''}
+                </option>
+                    )
+                  })}
             </select>
           ) : (
             <div className="text-sm text-gray-500">Nenhum currículo anexado ao candidato. Faça upload de um novo abaixo.</div>
@@ -1304,7 +1618,7 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
             onChange={(e) => {
               const file = e.target.files?.[0] || null
               if (file) {
-                const maxSize = 10 * 1024 * 1024 // 10MB
+                    const maxSize = 10 * 1024 * 1024
                 if (file.size > maxSize) {
                   try { 
                     const { useToast } = require('@/components/ToastProvider')
@@ -1321,106 +1635,102 @@ function UploadAndEvaluate({ stageId, applicationId, candidateName, onRunFinishe
           />
           <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 10MB</p>
         </div>
-        
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Áudio</label>
-          <input 
-            type="file" 
-            accept="audio/*" 
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
-            onChange={(e) => {
-              const file = e.target.files?.[0] || null
-              if (file) {
-                const maxSize = 50 * 1024 * 1024 // 50MB para áudio
-                if (file.size > maxSize) {
-                  try { 
-                    const { useToast } = require('@/components/ToastProvider')
-                    const { notify } = useToast()
-                    notify({ title: 'Arquivo muito grande', description: `O arquivo de áudio deve ter no máximo 50MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
-                  } catch {}
-                  e.target.value = ''
-                  return
-                }
-              }
-              setAudioFile(file)
-            }} 
-          />
-          <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 50MB</p>
         </div>
-        
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Transcrição (JSON)</label>
+        </>
+      )}
+
+      {/* Campos para análise de TRANSCRIÇÃO */}
+      {analysisType === 'transcript' && (
+        <div className="space-y-3">
+          <div className="rounded-lg border-2 border-dashed border-purple-300 bg-purple-50/50 p-4">
+            <label className="block text-sm font-medium text-purple-900 mb-2">
+              📝 Transcrição da Entrevista (Obrigatório)
+            </label>
+            <p className="text-xs text-purple-700 mb-3">
+              Anexe a transcrição da entrevista em PDF, DOCX, DOC ou JSON
+            </p>
           <input 
             type="file" 
-            accept="application/json,.json" 
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+              accept=".pdf,.doc,.docx,.json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/json" 
+              className="w-full border border-purple-300 rounded-md px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500" 
             onChange={(e) => {
               const file = e.target.files?.[0] || null
               if (file) {
-                const maxSize = 5 * 1024 * 1024 // 5MB para JSON
+                  const maxSize = 10 * 1024 * 1024
                 if (file.size > maxSize) {
                   try { 
                     const { useToast } = require('@/components/ToastProvider')
                     const { notify } = useToast()
-                    notify({ title: 'Arquivo muito grande', description: `O arquivo JSON deve ter no máximo 5MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
+                      notify({ title: 'Arquivo muito grande', description: `O arquivo deve ter no máximo 10MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
                   } catch {}
                   e.target.value = ''
                   return
                 }
               }
-              setTranscriptFile(file)
-            }} 
-          />
-          <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 5MB</p>
+                setStageDocumentFile(file)
+              }} 
+            />
+            {stageDocumentFile && (
+              <p className="text-xs text-purple-600 mt-2">
+                ✓ Arquivo selecionado: {stageDocumentFile.name} ({(stageDocumentFile.size / 1024 / 1024).toFixed(2)}MB)
+              </p>
+            )}
+            <p className="text-xs text-purple-600 mt-1">Formatos aceitos: PDF, DOCX, DOC, JSON | Tamanho máximo: 10MB</p>
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
-            Documento para análise na etapa (PDF, DOCX, DOC, JSON)
-          </label>
-          <p className="text-xs text-gray-500 mb-2">
-            Anexe um documento que a IA deve usar para analisar o diálogo de transcrição e formular uma nota
-          </p>
+            <label className="block text-xs font-medium text-gray-600 mb-1">🎵 Áudio da Entrevista (Opcional)</label>
+            <p className="text-xs text-gray-500 mb-2">Se desejar, anexe o áudio original da entrevista</p>
           <input 
             type="file" 
-            accept=".pdf,.docx,.doc,.json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/json" 
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+              accept="audio/*" 
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500" 
             onChange={(e) => {
               const file = e.target.files?.[0] || null
               if (file) {
-                const maxSize = 10 * 1024 * 1024 // 10MB para documentos
+                  const maxSize = 50 * 1024 * 1024
                 if (file.size > maxSize) {
                   try { 
                     const { useToast } = require('@/components/ToastProvider')
                     const { notify } = useToast()
-                    notify({ title: 'Arquivo muito grande', description: `O documento deve ter no máximo 10MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
+                      notify({ title: 'Arquivo muito grande', description: `O arquivo de áudio deve ter no máximo 50MB. Tamanho atual: ${(file.size / 1024 / 1024).toFixed(2)}MB`, variant: 'error' })
                   } catch {}
                   e.target.value = ''
                   return
                 }
               }
-              setStageDocumentFile(file)
-            }} 
-          />
-          {stageDocumentFile && (
-            <p className="text-xs text-gray-600 mt-1">
-              Arquivo selecionado: {stageDocumentFile.name} ({(stageDocumentFile.size / 1024 / 1024).toFixed(2)}MB)
-            </p>
-          )}
-          <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 10MB</p>
+                setAudioFile(file)
+              }} 
+            />
+            <p className="text-xs text-gray-500 mt-1">Tamanho máximo: 50MB</p>
         </div>
       </div>
+      )}
       
       <button 
-        disabled={submitting || !applicationId} 
+        disabled={submitting || !applicationId || (analysisType === 'transcript' && !stageDocumentFile)} 
         onClick={() => {
           console.log('[DEBUG] Botão Enviar para IA clicado')
           handleSubmit()
         }} 
-        className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200" 
-        title={applicationId ? undefined : 'Selecione um candidato na etapa para habilitar'}
+        className={`w-full rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 ${
+          analysisType === 'transcript' 
+            ? 'bg-purple-600 hover:bg-purple-700 text-white' 
+            : 'bg-blue-600 hover:bg-blue-700 text-white'
+        }`}
+        title={
+          !applicationId 
+            ? 'Selecione um candidato na etapa para habilitar' 
+            : analysisType === 'transcript' && !stageDocumentFile 
+              ? 'Anexe a transcrição da entrevista para continuar'
+              : undefined
+        }
       >
-        {submitting ? 'Enviando...' : 'Enviar para IA (transcrever e avaliar)'}
+        {submitting 
+          ? 'Enviando...' 
+          : analysisType === 'transcript' 
+            ? '🎤 Analisar Transcrição com IA' 
+            : '📄 Analisar Currículo com IA'}
       </button>
       {runId && appStageIdForPoller && (
         <RunPoller
@@ -1520,6 +1830,32 @@ function Panel({ jobId }: { jobId: string | null }) {
     refreshData()
   }, [jobId])
 
+  // Calcular ranking dos candidatos - DEVE estar antes de qualquer return condicional
+  const rankedCandidates = useMemo(() => {
+    if (!data?.items) return []
+    
+    return data.items.map((row: any) => {
+      const totalScore = data.stages.reduce((sum: number, stage: any) => {
+        const stageData = row.stages.find((x: any) => x.stage_id === stage.id)
+        return sum + (stageData?.score || 0) * stage.stage_weight
+      }, 0)
+      const totalWeight = data.stages.reduce((sum: number, stage: any) => sum + stage.stage_weight, 0)
+      const averageScore = totalWeight > 0 ? totalScore / totalWeight : 0
+      
+      // Encontrar a etapa atual do candidato (a última com score)
+      const currentStage = [...data.stages].reverse().find((s: any) => {
+        const stageData = row.stages.find((x: any) => x.stage_id === s.id)
+        return stageData?.score != null
+      })
+      
+      return {
+        ...row,
+        averageScore,
+        currentStageName: currentStage?.name || data.stages[0]?.name || 'Triagem',
+      }
+    }).sort((a: any, b: any) => b.averageScore - a.averageScore)
+  }, [data])
+
   if (!jobId) return null
   if (!data) {
     if (error) {
@@ -1532,90 +1868,143 @@ function Panel({ jobId }: { jobId: string | null }) {
     return <div className="text-sm text-gray-600">Carregando...</div>
   }
   
+  function exportToCSV() {
+    if (!data || data.items.length === 0) return
+    
+    // Cabeçalhos
+    const headers = ['Candidato', 'E-mail']
+    data.stages.forEach((s: any) => {
+      headers.push(`${s.name} (Nota)`)
+      headers.push(`${s.name} (Status)`)
+    })
+    headers.push('Média Ponderada')
+    
+    // Linhas de dados
+    const rows = data.items.map((row: any) => {
+      const totalScore = data.stages.reduce((sum: number, stage: any) => {
+        const stageData = row.stages.find((x: any) => x.stage_id === stage.id)
+        return sum + (stageData?.score || 0) * stage.stage_weight
+      }, 0)
+      const totalWeight = data.stages.reduce((sum: number, stage: any) => sum + stage.stage_weight, 0)
+      const averageScore = totalWeight > 0 ? totalScore / totalWeight : 0
+      
+      const rowData: string[] = [
+        row.candidate.name || '',
+        row.candidate.email || '',
+      ]
+      
+      data.stages.forEach((s: any) => {
+        const stage = row.stages.find((x: any) => x.stage_id === s.id)
+        const score = stage?.score ?? 0
+        const passed = score >= s.threshold
+        rowData.push(score.toFixed(1))
+        rowData.push(passed ? 'Aprovado' : 'Reprovado')
+      })
+      
+      rowData.push(averageScore.toFixed(1))
+      return rowData
+    })
+    
+    // Montar CSV
+    const csvContent = [
+      headers.join(';'),
+      ...rows.map((row: string[]) => row.map(cell => `"${cell}"`).join(';'))
+    ].join('\n')
+    
+    // Criar e baixar arquivo
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute('download', `painel_candidatos_${new Date().toISOString().split('T')[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  // Cores para posições do ranking
+  const getRankBadgeStyle = (position: number) => {
+    if (position === 1) return 'bg-yellow-400 text-yellow-900' // Ouro
+    if (position === 2) return 'bg-gray-400 text-gray-900' // Prata
+    if (position === 3) return 'bg-orange-400 text-orange-900' // Bronze
+    return 'bg-gray-200 text-gray-600' // Outros
+  }
+  
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h3 className="font-medium">Pontuações dos Candidatos</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Ranking de Candidatos</h3>
+        <div className="flex items-center gap-2">
         <button 
           onClick={refreshData} 
           disabled={refreshing}
-          className="btn btn-outline btn-sm"
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
         >
           {refreshing ? 'Atualizando...' : 'Atualizar'}
         </button>
+        </div>
       </div>
       
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm border border-gray-200 rounded-lg">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="border border-gray-200 px-4 py-3 text-left font-medium text-gray-900">Candidato</th>
-              {data.stages.map((s: any) => (
-                <th key={s.id} className="border border-gray-200 px-4 py-3 text-left font-medium text-gray-900">
-                  <div className="flex flex-col">
-                    <span>{s.name}</span>
-                    <span className="text-xs text-gray-500 font-normal">Min: {s.threshold}</span>
-                  </div>
-                </th>
-              ))}
-              <th className="border border-gray-200 px-4 py-3 text-left font-medium text-gray-900">Status Geral</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {data.items.map((row: any) => {
-              const totalScore = data.stages.reduce((sum: number, stage: any) => {
-                const stageData = row.stages.find((x: any) => x.stage_id === stage.id)
-                return sum + (stageData?.score || 0) * stage.stage_weight
-              }, 0)
-              const totalWeight = data.stages.reduce((sum: number, stage: any) => sum + stage.stage_weight, 0)
-              const averageScore = totalWeight > 0 ? totalScore / totalWeight : 0
-              
-              return (
-                <tr key={row.candidate.id} className="hover:bg-gray-50">
-                  <td className="border border-gray-200 px-4 py-3">
-                    <div className="flex flex-col">
-                      <span className="font-medium text-gray-900">{row.candidate.name}</span>
-                      {row.candidate.email && (
-                        <span className="text-xs text-gray-500">{row.candidate.email}</span>
-                      )}
-                    </div>
-                  </td>
-                  {data.stages.map((s: any) => {
-                    const stage = row.stages.find((x: any) => x.stage_id === s.id)
-                    const score = stage?.score ?? 0
-                    const passed = score >= s.threshold
-                    return (
-                      <td key={s.id} className="border border-gray-200 px-4 py-3">
-                        <div className="flex flex-col items-center">
-                          <span className={`font-medium ${passed ? 'text-green-600' : 'text-red-600'}`}>
-                            {score.toFixed(1)}
-                          </span>
-                          <span className={`text-xs ${passed ? 'text-green-600' : 'text-red-600'}`}>
-                            {passed ? '✓ Aprovado' : '✗ Reprovado'}
-                          </span>
-                        </div>
-                      </td>
-                    )
-                  })}
-                  <td className="border border-gray-200 px-4 py-3">
-                    <div className="flex flex-col items-center">
-                      <span className="font-medium text-gray-900">
-                        {averageScore.toFixed(1)}
-                      </span>
-                      <span className="text-xs text-gray-500">Média Ponderada</span>
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-      
-      {data.items.length === 0 && (
+      {rankedCandidates.length === 0 ? (
         <div className="text-center py-8 text-gray-500">
           <p>Nenhum candidato atribuído à vaga ainda.</p>
-          <p className="text-sm">Atribua candidatos na seção acima para ver as pontuações aqui.</p>
+          <p className="text-sm">Atribua candidatos na seção acima para ver o ranking aqui.</p>
+                  </div>
+      ) : (
+        <div className="space-y-3">
+          {rankedCandidates.map((row: any, index: number) => {
+            const position = index + 1
+            const scorePercent = Math.min((row.averageScore / 10) * 100, 100)
+              
+              return (
+              <div 
+                key={row.candidate.id} 
+                className="rounded-xl border border-gray-200 bg-white p-4 transition-shadow hover:shadow-md"
+              >
+                <div className="flex items-center gap-4">
+                  {/* Badge de posição */}
+                  <div className={`flex h-12 w-12 items-center justify-center rounded-full text-lg font-bold ${getRankBadgeStyle(position)}`}>
+                    {position}
+                    </div>
+                  
+                  {/* Informações do candidato */}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-gray-900">{row.candidate.name || 'Sem nome'}</div>
+                    <div className="text-sm text-gray-500">{row.currentStageName}</div>
+                        </div>
+                  
+                  {/* Score e barra de progresso */}
+                  <div className="flex flex-col items-end gap-1 w-32">
+                    <span className="text-2xl font-bold text-blue-600">
+                      {row.averageScore.toFixed(1)}
+                      </span>
+                    <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-gray-800 rounded-full transition-all duration-500"
+                        style={{ width: `${scorePercent}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              )
+            })}
+      </div>
+      )}
+      
+      {rankedCandidates.length > 0 && (
+        <div className="flex justify-end pt-4 border-t border-gray-200">
+          <button
+            type="button"
+            onClick={exportToCSV}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Extrair para CSV
+          </button>
         </div>
       )}
     </div>

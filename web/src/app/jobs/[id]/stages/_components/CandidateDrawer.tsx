@@ -12,6 +12,7 @@ export default function CandidateDrawer({
   applicationId,
   applicationStageId,
   candidate,
+  analysisType = 'resume',
 }: {
   open: boolean
   onClose: () => void
@@ -19,12 +20,15 @@ export default function CandidateDrawer({
   applicationId: string
   applicationStageId: string
   candidate: { id: string; name?: string; email?: string }
+  analysisType?: 'resume' | 'transcript'
 }) {
   const { notify } = useToast()
   const [loading, setLoading] = useState(false)
   const [analysis, setAnalysis] = useState<LatestAnalysis | null>(null)
   const [revaluating, setRevaluating] = useState(false)
   const [candidateData, setCandidateData] = useState<any>(null)
+  const [transcriptFile, setTranscriptFile] = useState<File | null>(null)
+  const [uploadingTranscript, setUploadingTranscript] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -85,6 +89,59 @@ export default function CandidateDrawer({
     }
   }
 
+  async function handleAnalyzeTranscript() {
+    if (!transcriptFile) {
+      notify({ title: 'Arquivo obrigatório', description: 'Anexe a transcrição antes de analisar.', variant: 'error' })
+      return
+    }
+    
+    setUploadingTranscript(true)
+    try {
+      // Upload do arquivo de transcrição
+      const contentType = transcriptFile.type || 
+        (transcriptFile.name.endsWith('.pdf') ? 'application/pdf' :
+        transcriptFile.name.endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
+        transcriptFile.name.endsWith('.doc') ? 'application/msword' :
+        transcriptFile.name.endsWith('.json') ? 'application/json' : 'application/pdf')
+      
+      const uploadRes = await fetch('/api/uploads/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: transcriptFile.name, content_type: contentType, for_stage: true }),
+      })
+      const uploadJson = await uploadRes.json()
+      
+      // Upload para URL assinada
+      await fetch(uploadJson.upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType, 'Cache-Control': 'max-age=3600' },
+        body: transcriptFile,
+      })
+
+      // Iniciar análise com a transcrição
+      setAnalysis({ status: 'running' } as LatestAnalysis)
+      await evaluate(stageId, {
+        application_id: applicationId,
+        application_stage_id: applicationStageId,
+        candidate_id: candidate.id,
+        document_path: uploadJson.path,
+        document_signed_url: uploadJson.view_url,
+      })
+      
+      notify({ title: 'Análise iniciada', description: 'A IA está processando a transcrição.', variant: 'success' })
+      setTranscriptFile(null)
+      
+      setTimeout(async () => {
+        const latest = await getLatestAnalysis(stageId, { applicationStageId })
+        setAnalysis(latest)
+      }, 2000)
+    } catch (e: any) {
+      notify({ title: 'Falha na análise', description: e?.message, variant: 'error' })
+    } finally {
+      setUploadingTranscript(false)
+    }
+  }
+
   const resumeUrl = useMemo(() => {
     if (!candidateData?.resume_path || !candidateData?.resume_bucket) return null
     return `/api/candidates/resume?path=${encodeURIComponent(candidateData.resume_path)}&bucket=${candidateData.resume_bucket}`
@@ -132,24 +189,28 @@ export default function CandidateDrawer({
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (resumeUrl) window.open(resumeUrl, '_blank', 'noopener,noreferrer')
-              }}
-              disabled={!resumeUrl}
-              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              📄 Ver currículo
-            </button>
-            <button
-              type="button"
-              onClick={handleReevaluate}
-              disabled={revaluating}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-400"
-            >
-              {revaluating ? 'Analisando...' : '⚡ Analisar com IA'}
-            </button>
+            {analysisType === 'resume' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (resumeUrl) window.open(resumeUrl, '_blank', 'noopener,noreferrer')
+                  }}
+                  disabled={!resumeUrl}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  📄 Ver currículo
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReevaluate}
+                  disabled={revaluating}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-400"
+                >
+                  {revaluating ? 'Analisando...' : '⚡ Analisar com IA'}
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={onClose}
@@ -159,6 +220,61 @@ export default function CandidateDrawer({
             </button>
           </div>
         </div>
+
+        {/* Upload de Transcrição - apenas para etapas de transcrição */}
+        {analysisType === 'transcript' && (
+          <div className="mt-6 rounded-xl border-2 border-dashed border-purple-300 bg-purple-50/50 p-5">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">🎤</span>
+              <div className="flex-1">
+                <h4 className="font-semibold text-purple-900">Análise de Transcrição</h4>
+                <p className="text-sm text-purple-700 mt-1">
+                  Anexe a transcrição da entrevista para que a IA possa analisá-la.
+                </p>
+                
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-purple-800 mb-2">
+                      Arquivo de transcrição (PDF, DOCX, DOC, JSON)
+                    </label>
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,.json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/json"
+                      onChange={(e) => setTranscriptFile(e.target.files?.[0] || null)}
+                      className="w-full rounded-lg border border-purple-300 bg-white px-3 py-2 text-sm file:mr-4 file:rounded-lg file:border-0 file:bg-purple-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-purple-700"
+                    />
+                    {transcriptFile && (
+                      <p className="mt-2 text-sm text-purple-700">
+                        ✓ Arquivo selecionado: {transcriptFile.name} ({(transcriptFile.size / 1024 / 1024).toFixed(2)} MB)
+                      </p>
+                    )}
+                </div>
+                  
+                  <button
+                    type="button"
+                    onClick={handleAnalyzeTranscript}
+                    disabled={!transcriptFile || uploadingTranscript}
+                    className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {uploadingTranscript ? (
+                      <>
+                        <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Enviando...
+                      </>
+                    ) : (
+                      <>
+                        🎤 Analisar Transcrição
+                      </>
+                    )}
+                  </button>
+                  </div>
+                  </div>
+                </div>
+          </div>
+        )}
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
@@ -242,9 +358,9 @@ export default function CandidateDrawer({
                   ))
                 ) : (
                   <li>—</li>
-                )}
+            )}
               </ul>
-            </div>
+          </div>
 
             <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-amber-700">
@@ -262,8 +378,8 @@ export default function CandidateDrawer({
                   <li>—</li>
                 )}
               </ul>
-            </div>
           </div>
+        </div>
         )}
 
         {analysis?.result?.recommendations && analysis.result.recommendations.length > 0 && (

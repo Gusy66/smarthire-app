@@ -29,7 +29,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const { data, error } = await supabase
     .from('job_stages')
-    .select('id, name, description, order_index, threshold, stage_weight, created_at, jobs!inner(company_id)')
+    .select('id, name, description, order_index, threshold, stage_weight, analysis_type, created_at, jobs!inner(company_id)')
     .eq('job_id', id)
     .eq('jobs.company_id', user.company_id)
     .order('order_index', { ascending: true })
@@ -43,7 +43,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params
   const body = await req.json()
-  const { name, description = null, order_index = 0, threshold = 0, stage_weight = 1 } = body || {}
+  const { name, description = null, order_index = 0, threshold = 0, stage_weight = 1, analysis_type = 'resume' } = body || {}
   if (!name) return Response.json({ error: { code: 'validation_error', message: 'name is required' } }, { status: 400 })
   const supabase = getSupabaseAdmin()
   let user
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const { data, error } = await supabase
     .from('job_stages')
-    .insert({ job_id: id, name, description, order_index, threshold, stage_weight })
+    .insert({ job_id: id, name, description, order_index, threshold, stage_weight, analysis_type })
     .select('id')
     .single()
   if (error) {

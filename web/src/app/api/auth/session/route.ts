@@ -5,8 +5,17 @@ export async function POST(req: NextRequest) {
   const cookieStore = await cookies()
   let payload: any = {}
   try {
-    payload = await req.json()
-    const { event, session } = payload
+    // Tentar parsear o body, se estiver vazio ou inválido, usar objeto vazio
+    const text = await req.text()
+    if (text && text.trim()) {
+      try {
+        payload = JSON.parse(text)
+      } catch {
+        payload = {}
+      }
+    }
+    
+    const { event, session } = payload || {}
 
     const shouldSetToken = ['SIGNED_IN', 'INITIAL_SESSION', 'TOKEN_REFRESHED', 'REFRESH_TOKEN_UPDATED', 'RECOVERED', 'PASSWORD_RECOVERY'].includes(event)
     if (shouldSetToken) {
@@ -35,7 +44,11 @@ export async function POST(req: NextRequest) {
     return response
   } catch (error) {
     console.error('Erro ao sincronizar sessão', error, 'payload:', payload)
-    return Response.json({ error: { code: 'internal_error', message: 'Falha ao sincronizar sessão' } }, { status: 500 })
+    // Mesmo com erro, tentar deletar o cookie para garantir logout
+    try {
+      cookieStore.delete('sb-access-token')
+    } catch {}
+    return Response.json({ ok: true })
   }
 }
 

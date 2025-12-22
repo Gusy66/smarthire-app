@@ -27,25 +27,38 @@ export default function AuthStatus({ variant = 'default' }: AuthStatusProps) {
   async function handleLogout() {
     if (loggingOut) return
     setLoggingOut(true)
+    
+    // Timeout para garantir redirecionamento mesmo se algo travar
+    const redirectTimeout = setTimeout(() => {
+      console.log('Timeout atingido, forçando redirecionamento...')
+      window.location.href = '/login'
+    }, 3000)
+    
     try {
-      const { error } = await supabase.auth.signOut()
-      if (error) {
-        console.error('Erro ao sair:', error)
-      }
-      try {
-        await fetch('/api/auth/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ event: 'SIGNED_OUT', session: null }),
-        })
-      } catch (syncError) {
-        console.error('Falha ao sincronizar logout', syncError)
-      }
-      router.replace('/login')
-      router.refresh()
-    } finally {
-      setLoggingOut(false)
+      // Primeiro: Limpar cookie no servidor (mais importante)
+      await fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ event: 'SIGNED_OUT', session: null }),
+      }).catch(() => {})
+
+      // Depois: Tentar fazer logout no Supabase (com timeout curto)
+      const signOutPromise = supabase.auth.signOut()
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 1500)
+      )
+      
+      await Promise.race([signOutPromise, timeoutPromise]).catch((err) => {
+        console.warn('SignOut demorou ou falhou:', err)
+      })
+
+      clearTimeout(redirectTimeout)
+      window.location.href = '/login'
+    } catch (error) {
+      console.error('Erro no logout:', error)
+      clearTimeout(redirectTimeout)
+      window.location.href = '/login'
     }
   }
 
