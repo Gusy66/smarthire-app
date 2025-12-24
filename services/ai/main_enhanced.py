@@ -281,27 +281,39 @@ async def download_file_from_storage(path: str, bucket: str | None = None) -> Pa
     if not storage_url or not service_role:
         raise RuntimeError("SUPABASE_STORAGE_URL ou SUPABASE_SERVICE_ROLE_KEY não configurados")
 
-    actual_bucket = bucket
-    file_path = path
-
-    if path.startswith("http"):
+    # Se é uma URL assinada (contém ?token=), usa diretamente
+    if path.startswith("http") and "?token=" in path:
+        download_url = path
+        # Extrai a extensão do arquivo da URL
+        parsed = urlparse(path)
+        file_path = parsed.path.split('/')[-1]  # Pega só o nome do arquivo
+        print(f"[IA] Usando URL assinada diretamente: {download_url[:100]}...")
+    elif path.startswith("http"):
+        # URL completa sem token - precisa processar
         parsed = urlparse(path)
         file_path = parsed.path.lstrip('/')
+        actual_bucket = bucket
         if not bucket and '/' in file_path:
             parts = file_path.split('/', 1)
             actual_bucket = parts[0]
             file_path = parts[1]
+        if not actual_bucket:
+            raise ValueError("Bucket não informado para download do arquivo")
+        download_url = f"{storage_url}/object/{actual_bucket}/{file_path}"
+        print(f"[IA] Construindo URL de download: {download_url}")
     else:
+        # É apenas o caminho do arquivo
+        actual_bucket = bucket
+        file_path = path
         if '/' in path:
             parts = path.split('/', 1)
             if len(parts) == 2:
                 actual_bucket = parts[0]
                 file_path = parts[1]
-
-    if not actual_bucket:
-        raise ValueError("Bucket não informado para download do arquivo")
-
-    download_url = f"{storage_url}/object/{actual_bucket}/{file_path}"
+        if not actual_bucket:
+            raise ValueError("Bucket não informado para download do arquivo")
+        download_url = f"{storage_url}/object/{actual_bucket}/{file_path}"
+        print(f"[IA] Construindo URL de download: {download_url}")
 
     async with httpx.AsyncClient() as client:
         response = await client.get(download_url, timeout=60.0, headers={
@@ -415,62 +427,109 @@ async def analyze_candidate_with_openai(
             if not requirements_text.strip():
                 requirements_text = "- Nenhum requisito específico informado; utilize a descrição da etapa como referência principal."
             
-            base_prompt = prompt_template or """
-Analise o candidato para esta etapa do processo seletivo de forma objetiva e baseada EXCLUSIVAMENTE nas informações fornecidas.
+            # Prompt base para análise - SEMPRE incluir contexto mesmo com template customizado
+            system_instructions = """
+CONTEXTO OBRIGATÓRIO PARA ANÁLISE:
 
-DESCRIÇÃO DA ETAPA (contexto principal a ser considerado):
+===== DESCRIÇÃO DA ETAPA/VAGA =====
 {{STAGE_DESCRIPTION}}
 
-REQUISITOS OU EXPECTATIVAS PARA ESTA ETAPA:
+===== REQUISITOS E EXPECTATIVAS =====
 {{REQUIREMENTS_LIST}}
 
-INFORMAÇÕES DO CANDIDATO (texto real do currículo e anexos):
+===== CURRÍCULO DO CANDIDATO (TEXTO EXTRAÍDO) =====
 {{CANDIDATE_INFO}}
 
-INSTRUÇÕES CRÍTICAS (obrigatórias):
-1. Utilize a descrição da etapa como referência central para julgar a aderência do candidato.
-2. Compare cada item encontrado no currículo com a descrição/requisitos e explique a relação.
-3. Não invente informações: cite apenas o que estiver explicitamente no currículo.
-4. Se faltar alguma informação relevante, registre explicitamente que ela não aparece no currículo.
-5. Caso o currículo esteja vazio ou ilegível, informe isso claramente e atribua nota 0.
-
-CRITÉRIO DE PONTUAÇÃO (0 a 10):
-- 0 significa nenhuma aderência aos requisitos ou competências da etapa.
-- 10 significa aderência total aos requisitos e expectativas descritas.
-- Distribua a nota proporcionalmente ao atendimento dos requisitos, considerando pesos quando informados.
-- Justifique a nota citando evidências concretas do currículo relacionadas à descrição da etapa.
-
-FORMATO DE RESPOSTA (JSON obrigatório):
-{"score": number, "analysis": string, "strengths": string[], "weaknesses": string[], "matched_requirements": string[], "missing_requirements": string[]}
-
-REGRAS ADICIONAIS:
-- Liste em "matched_requirements" apenas itens comprovados pelo currículo e que se conectem à descrição.
-- Liste em "missing_requirements" requisitos/competências relevantes que não foram comprovados.
-- Seja específico nas listas: use frases curtas que expliquem a evidência (ou ausência) encontrada.
-- Não inclua campos extras ou comentários fora do JSON solicitado.
+===== FIM DO CONTEXTO =====
 """
-
-            prompt = (
-                base_prompt
+            
+            # Substituir placeholders no contexto
+            context_block = (
+                system_instructions
                 .replace("{{STAGE_DESCRIPTION}}", stage_description)
                 .replace("{{REQUIREMENTS_LIST}}", requirements_text)
-                .replace("{{CANDIDATE_INFO}}", text_content)
+                .replace("{{CANDIDATE_INFO}}", text_content if text_content.strip() else "[CURRÍCULO VAZIO OU NÃO FORNECIDO]")
             )
+            
+            # Construir prompt de análise
+            if prompt_template and prompt_template.strip():
+                # Se há template customizado, usar ele + contexto obrigatório
+                user_instructions = prompt_template
+            else:
+                # Prompt padrão detalhado
+                user_instructions = """
+Você é um analista de RH sênior especializado em recrutamento e seleção.
+
+TAREFA: Analisar o candidato para esta etapa do processo seletivo de forma OBJETIVA e DETALHADA, baseando-se EXCLUSIVAMENTE nas informações do currículo fornecido.
+
+INSTRUÇÕES CRÍTICAS:
+1. LEIA COM ATENÇÃO TODO O CURRÍCULO antes de avaliar
+2. CITE EVIDÊNCIAS CONCRETAS do currículo para cada ponto (experiências, cargos, tempo, empresas)
+3. COMPARE cada requisito da vaga com as experiências listadas no currículo
+4. NÃO INVENTE informações - se algo não está no currículo, registre como "não informado"
+5. Se o currículo estiver vazio, atribua nota 0 e informe claramente
+
+CRITÉRIO DE PONTUAÇÃO (escala de 0 a 10 com até 2 casas decimais):
+- Use notas precisas como 7.3, 8.7, 6.15 - NÃO arredonde para números inteiros
+- Calcule a nota baseando-se na porcentagem de requisitos atendidos:
+  * 0-2: Não atende nenhum requisito relevante
+  * 3-4: Atende menos de 30% dos requisitos
+  * 5-6: Atende 30-50% dos requisitos
+  * 7-8: Atende 50-80% dos requisitos
+  * 9-10: Atende mais de 80% dos requisitos
+- Considere TEMPO DE EXPERIÊNCIA nas áreas relevantes
+- Considere NÍVEL DE SENIORIDADE (estagiário, analista, coordenador, gerente, diretor)
+- Considere FORMAÇÃO ACADÊMICA se relevante para a vaga
+
+ANÁLISE ESPECÍFICA DE LIDERANÇA (quando aplicável):
+- Cargos como "Gerente", "Coordenador", "Supervisor", "Líder" indicam experiência em liderança
+- Tempo no cargo de liderança é evidência concreta
+- Menções a "equipe", "time", "gestão de pessoas" são indicadores
+
+FORMATO DE RESPOSTA (JSON estrito):
+{"score": number, "analysis": string, "strengths": string[], "weaknesses": string[], "matched_requirements": string[], "missing_requirements": string[]}
+
+REGRAS PARA O JSON:
+- "score": Número decimal entre 0 e 10 (ex: 7.35, 8.2, 6.85)
+- "analysis": Resumo de 2-4 frases citando experiências específicas do currículo
+- "strengths": Lista de 3-5 pontos fortes COM EVIDÊNCIAS do currículo (ex: "12 anos como Gerente de Vendas na Unidas")
+- "weaknesses": Lista de pontos fracos reais OU requisitos não comprovados no currículo
+- "matched_requirements": Requisitos da vaga que SÃO atendidos pelo currículo
+- "missing_requirements": Requisitos da vaga NÃO evidenciados no currículo
+"""
+            
+            # Montar prompt final: contexto + instruções
+            prompt = f"""
+{context_block}
+
+===== INSTRUÇÕES DE ANÁLISE =====
+{user_instructions}
+"""
 
             print(f"[IA] ========== PROMPT FINAL PARA OPENAI ==========")
             print(f"[IA] Prompt preparado: {len(prompt)} caracteres")
-            # Evitar imprimir o prompt completo em produção
-            # print(f"[IA] {prompt}")
+            print(f"[IA] Contexto incluído: {len(context_block)} caracteres")
+            print(f"[IA] Instruções incluídas: {len(user_instructions)} caracteres")
+            print(f"[IA] Currículo incluído no prompt: {'SIM' if text_content.strip() else 'NÃO - VAZIO!'}")
             print(f"[IA] ========== FIM DO PROMPT ==========")
             print(f"[IA] Fazendo requisição para OpenAI...")
 
             # Monta payload com JSON Schema único (sem oneOf)
+            system_message = """Você é um especialista sênior em Recursos Humanos com 20 anos de experiência em recrutamento e seleção.
+
+REGRAS ABSOLUTAS:
+1. Analise APENAS o currículo fornecido - não invente informações
+2. CITE evidências concretas do currículo (empresas, cargos, tempo de experiência)
+3. Use pontuação DECIMAL precisa (ex: 7.35, 8.2) - NÃO arredonde para inteiros
+4. Se o candidato tem cargo de "Gerente", "Coordenador", "Supervisor" no currículo, isso É experiência em liderança
+5. Responda APENAS em JSON válido no formato especificado"""
+
             payload = {
                 "model": config.model,
                 "messages": [
                     {
                         "role": "system",
-                        "content": "Você é um especialista em RH que analisa candidatos de forma objetiva e justa. Sempre responda em formato JSON válido."
+                        "content": system_message
                     },
                     {
                         "role": "user",

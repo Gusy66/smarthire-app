@@ -15,9 +15,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   
   const {
     application_id,
-    resume_path,
-    resume_bucket,
-    resume_signed_url,
+    resume_path: explicitResumePath,
+    resume_bucket: explicitResumeBucket,
+    resume_signed_url: explicitResumeSignedUrl,
     audio_path,
     audio_bucket,
     audio_signed_url,
@@ -36,8 +36,50 @@ export async function POST(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'validation_error', message: 'application_id é obrigatório' } }, { status: 400 })
   }
 
+  // Buscar currículo do candidato automaticamente se não foi enviado explicitamente
+  let resume_path = explicitResumePath
+  let resume_bucket = explicitResumeBucket
+  let resume_signed_url = explicitResumeSignedUrl
+
   console.log('[DEBUG API] Obtendo Supabase admin...')
   const supabase = getSupabaseAdmin()
+
+  // Se não foi enviado currículo explicitamente, buscar do candidato
+  if (!resume_path) {
+    console.log('[DEBUG API] Buscando currículo do candidato via application_id...')
+    const { data: appData, error: appError } = await supabase
+      .from('applications')
+      .select('candidate_id, candidates(resume_path, resume_bucket)')
+      .eq('id', application_id)
+      .single()
+
+    if (!appError && appData?.candidates?.resume_path) {
+      resume_path = appData.candidates.resume_path
+      resume_bucket = appData.candidates.resume_bucket || 'resumes'
+      
+      // Remover prefixo do bucket se estiver presente no path (compatibilidade com registros antigos)
+      if (resume_path.startsWith(`${resume_bucket}/`)) {
+        resume_path = resume_path.substring(resume_bucket.length + 1)
+        console.log('[DEBUG API] Removido prefixo do bucket do path:', resume_path)
+      }
+      
+      console.log('[DEBUG API] Currículo encontrado:', resume_bucket, resume_path)
+
+      // Gerar URL assinada para o currículo
+      const { data: signedUrlData, error: signError } = await supabase.storage
+        .from(resume_bucket)
+        .createSignedUrl(resume_path, 60 * 60) // 1 hora de validade
+
+      if (!signError && signedUrlData?.signedUrl) {
+        resume_signed_url = signedUrlData.signedUrl
+        console.log('[DEBUG API] URL assinada gerada com sucesso')
+      } else {
+        console.log('[DEBUG API] Erro ao gerar URL assinada:', signError)
+      }
+    } else {
+      console.log('[DEBUG API] Candidato não tem currículo anexado ou erro:', appError)
+    }
+  }
   
   console.log('[DEBUG API] Verificando usuário...')
   const user = await requireUser()

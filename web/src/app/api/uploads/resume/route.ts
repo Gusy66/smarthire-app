@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
 
     return Response.json({
       upload_url: data.signedUrl,
-      path: `${bucket}/${path}`,
+      path,  // Apenas o nome do arquivo, sem o bucket prefix
       bucket,
       view_url: downloadSignedUrl?.signedUrl ?? null,
     })
