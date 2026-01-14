@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../_lib/supabaseAdmin'
 import { requireUser } from '../_lib/auth'
+import { requirePermission } from '../_lib/permissions'
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseAdmin()
@@ -46,6 +47,21 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Verificar permissão para criar/editar vagas
+  let user
+  try {
+    user = await requirePermission('criar_editar_vagas')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown'
+    if (message === 'unauthorized') {
+      return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
+    }
+    if (message.startsWith('permission_denied')) {
+      return Response.json({ error: { code: 'forbidden', message: 'Você não tem permissão para criar vagas' } }, { status: 403 })
+    }
+    return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
+  }
+
   const body = await req.json()
   const { 
     title, 
@@ -67,14 +83,8 @@ export async function POST(req: NextRequest) {
     observations
   } = body || {}
   if (!title) return Response.json({ error: { code: 'validation_error', message: 'title is required' } }, { status: 400 })
-  // For MVP, attach to a default company. In production, derive from auth/session.
+  
   const supabase = getSupabaseAdmin()
-  let user
-  try {
-    user = await requireUser()
-  } catch (error) {
-    return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
-  }
   // Get or create default company "Dev Co"
   const companyId = user.company_id
 

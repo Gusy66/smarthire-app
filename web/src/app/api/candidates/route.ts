@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../_lib/supabaseAdmin'
 import { requireUser } from '../_lib/auth'
+import { requirePermission } from '../_lib/permissions'
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseAdmin()
@@ -138,6 +139,21 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Verificar permissão para cadastrar candidatos
+  let user
+  try {
+    user = await requirePermission('cadastrar_candidatos')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown'
+    if (message === 'unauthorized') {
+      return Response.json({ error: { code: 'unauthorized', message: 'Sessão inválida' } }, { status: 401 })
+    }
+    if (message.startsWith('permission_denied')) {
+      return Response.json({ error: { code: 'forbidden', message: 'Você não tem permissão para cadastrar candidatos' } }, { status: 403 })
+    }
+    return Response.json({ error: { code: 'unauthorized', message: 'Sessão inválida' } }, { status: 401 })
+  }
+
   const body = await req.json()
   const { 
     name, 
@@ -162,12 +178,6 @@ export async function POST(req: NextRequest) {
   if (!stage_id) return Response.json({ error: { code: 'validation_error', message: 'etapa é obrigatória' } }, { status: 400 })
   if (!resume_path) return Response.json({ error: { code: 'validation_error', message: 'CV é obrigatório' } }, { status: 400 })
   const supabase = getSupabaseAdmin()
-  let user
-  try {
-    user = await requireUser()
-  } catch (err) {
-    return Response.json({ error: { code: 'unauthorized', message: 'Sessão inválida' } }, { status: 401 })
-  }
 
   const { data: candidate, error } = await supabase
     .from('candidates')

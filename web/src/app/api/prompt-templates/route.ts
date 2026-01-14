@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../_lib/supabaseAdmin'
 import { requireUser } from '../_lib/auth'
+import { requirePermission } from '../_lib/permissions'
 
 export async function GET() {
   try {
@@ -30,8 +31,9 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    // Verificar permissão para criar prompts
+    const user = await requirePermission('criar_prompts')
     const supabase = getSupabaseAdmin()
-    const user = await requireUser()
 
     const body = await req.json()
     const { name, description, content, is_default } = body || {}
@@ -72,6 +74,9 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     if (error?.message === 'unauthorized') {
       return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
+    }
+    if (error?.message?.startsWith('permission_denied')) {
+      return Response.json({ error: { code: 'forbidden', message: 'Você não tem permissão para criar prompts' } }, { status: 403 })
     }
     return Response.json({ error: { code: 'internal_error', message: 'Erro interno do servidor' } }, { status: 500 })
   }

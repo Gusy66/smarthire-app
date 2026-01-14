@@ -40,6 +40,15 @@ const links = [
     )
   },
   { 
+    href: '/usuarios', 
+    label: 'Usuários',
+    icon: (
+      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+      </svg>
+    )
+  },
+  { 
     href: '/settings', 
     label: 'Configurações',
     icon: (
@@ -98,6 +107,7 @@ export default function NavBar() {
     if (href === '/dashboard') return pathname === '/dashboard'
     if (href === '/settings/prompts') return pathname?.startsWith('/settings/prompts')
     if (href === '/settings') return pathname?.startsWith('/settings') && !pathname?.includes('/settings/prompts')
+    if (href === '/usuarios') return pathname?.startsWith('/usuarios')
     return pathname?.startsWith(href)
   }
 

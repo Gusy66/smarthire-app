@@ -108,15 +108,69 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return (json ?? {}) as T
 }
 
+type RequirementStat = {
+  requirementId: string
+  label: string
+  stageId: string
+  stageName: string
+  matched: number
+  total: number
+  percent: number
+}
+
+const ESTIMATED_MINUTES = {
+  resume: 10,
+  transcript: 20,
+  proof: 10,
+} as const
+
+const HOURLY_COST_BRL = 30
+const PLAN_MONTHLY_COST_BRL = 299
+
+function formatCurrencyBRL(value: number) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
+}
+
+function formatDuration(ms: number | null) {
+  if (!ms || ms <= 0) return '—'
+  const totalMinutes = Math.round(ms / 60000)
+  if (totalMinutes < 60) return `${totalMinutes} min`
+  const totalHours = Math.round(totalMinutes / 60)
+  if (totalHours < 24) return `${totalHours}h`
+  const days = Math.floor(totalHours / 24)
+  const hours = totalHours % 24
+  return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+}
+
+function getStageEffortMinutes(stage: Stage) {
+  const name = stage.name?.toLowerCase() || ''
+  if (name.includes('prova') || name.includes('teste')) return ESTIMATED_MINUTES.proof
+  if (stage.analysis_type === 'transcript' || name.includes('entrevista')) return ESTIMATED_MINUTES.transcript
+  return ESTIMATED_MINUTES.resume
+}
+
 export default function JobStagesPage({ params }: { params: Promise<{ id: string }> }) {
   const { notify } = useToast()
   const [jobId, setJobId] = useState<string | null>(null)
   const [stages, setStages] = useState<Stage[]>([])
-  const [jobInfo, setJobInfo] = useState<{ id: string; title: string } | null>(null)
+  const [jobInfo, setJobInfo] = useState<{ id: string; title: string; created_at?: string | null; status?: string | null } | null>(null)
   const [creating, setCreating] = useState(false)
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const [activeMainTab, setActiveMainTab] = useState<'candidatos' | 'etapas' | 'analytics'>('candidatos')
-  const [board, setBoard] = useState<{ lanes: Record<string, { application_id: string; application_stage_id: string; candidate: any; score: number | null }[]>, stages: Stage[] } | null>(null)
+  const [board, setBoard] = useState<{
+    lanes: Record<
+      string,
+      {
+        application_id: string
+        application_stage_id: string
+        candidate: any
+        score: number | null
+        stage_id?: string
+        application_created_at?: string | null
+      }[]
+    >
+    stages: Stage[]
+  } | null>(null)
   const [selectedForBulk, setSelectedForBulk] = useState<Record<string, boolean>>({})
   const [filters, setFilters] = useState<CF>({ query: '' })
   const [currentItem, setCurrentItem] = useState<{ application_id: string; application_stage_id: string; candidate: { id: string; name?: string } } | null>(null)
@@ -136,6 +190,12 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [analysisByStage, setAnalysisByStage] = useState<Record<string, StageAnalysisResult | null>>({})
   const [analysisLoading, setAnalysisLoading] = useState<Record<string, boolean>>({})
   const [analysisExpanded, setAnalysisExpanded] = useState<Record<string, boolean>>({})
+  const [requirementsSummary, setRequirementsSummary] = useState<{
+    most: RequirementStat[]
+    least: RequirementStat[]
+    loading: boolean
+  }>({ most: [], least: [], loading: false })
+  const requirementsLoadKey = useRef(0)
   const pollingTimeouts = useRef<Record<string, number>>({})
   
   // Estado para atribuição de candidatos
@@ -224,11 +284,168 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const advancedCandidatesCount = Math.max(totalCandidates - newCandidatesCount, 0)
   const inactiveCandidatesCount = candidateRows.filter((row) => row.status === 'Não ativo').length
 
+  const analyticsData = useMemo(() => {
+    const now = Date.now()
+    const stageList = orderedStages
+    const lastStageId = stageList[stageList.length - 1]?.id ?? null
+    const finalStageItems = lastStageId ? board?.lanes?.[lastStageId] ?? [] : []
+    const conversionRate = totalCandidates > 0 ? (finalStageItems.length / totalCandidates) * 100 : 0
+
+    const applicationTimes = applications
+      .map((app) => (app?.created_at ? new Date(app.created_at).getTime() : null))
+      .filter((value): value is number => Boolean(value))
+    const earliestApplication = applicationTimes.length ? Math.min(...applicationTimes) : null
+    const jobCreatedAt = jobInfo?.created_at ? new Date(jobInfo.created_at).getTime() : earliestApplication
+    const timeOpenMs = jobCreatedAt ? now - jobCreatedAt : null
+
+    const slaCandidates = finalStageItems.filter((item) => Boolean(item.application_created_at))
+    const slaMs =
+      slaCandidates.length > 0
+        ? slaCandidates.reduce((sum, item) => {
+            const createdAt = item.application_created_at ? new Date(item.application_created_at).getTime() : now
+            return sum + (now - createdAt)
+          }, 0) / slaCandidates.length
+        : null
+
+    const allScores = Object.values(board?.lanes ?? {}).flatMap((items) =>
+      items.map((item) => item.score).filter((score): score is number => typeof score === 'number')
+    )
+    const hasScores = allScores.length > 0
+    const averageScore = hasScores ? allScores.reduce((sum, score) => sum + score, 0) / allScores.length : 0
+
+    const topCount = hasScores ? Math.max(1, Math.ceil(allScores.length * 0.2)) : 0
+    const topScores = [...allScores].sort((a, b) => b - a).slice(0, topCount)
+    const hasAdherence = topScores.length > 0
+    const adherenceScore = hasAdherence ? topScores.reduce((sum, score) => sum + score, 0) / topScores.length : 0
+
+    const adherenceLabel =
+      adherenceScore < 6.9 ? 'Precisa melhorar' : adherenceScore < 8 ? 'Médio' : 'Top'
+
+    const stageScoreSummary = stageList.map((stage) => {
+      const stageScores = (board?.lanes?.[stage.id] ?? [])
+        .map((item) => item.score)
+        .filter((score): score is number => typeof score === 'number')
+      const avg =
+        stageScores.length > 0 ? stageScores.reduce((sum, score) => sum + score, 0) / stageScores.length : null
+      return { stageId: stage.id, stageName: stage.name, averageScore: avg }
+    })
+
+    const stageEffortSummary = stageList.map((stage) => {
+      const count = board?.lanes?.[stage.id]?.length ?? 0
+      const minutesPerCandidate = getStageEffortMinutes(stage)
+      const totalMinutes = count * minutesPerCandidate
+      const totalHours = totalMinutes / 60
+      return { stageId: stage.id, stageName: stage.name, count, minutesPerCandidate, totalMinutes, totalHours }
+    })
+
+    const totalHoursSaved = stageEffortSummary.reduce((sum, entry) => sum + entry.totalHours, 0)
+    const resumeEvaluations = stageList.reduce((sum, stage) => {
+      const isResumeStage = stage.analysis_type === 'resume' || stage.name?.toLowerCase().includes('curr')
+      if (!isResumeStage) return sum
+      return sum + (board?.lanes?.[stage.id]?.length ?? 0)
+    }, 0)
+    const costSaved = resumeEvaluations * (10 / 60) * HOURLY_COST_BRL
+    const roiPercent =
+      PLAN_MONTHLY_COST_BRL > 0 ? ((costSaved - PLAN_MONTHLY_COST_BRL) / PLAN_MONTHLY_COST_BRL) * 100 : null
+
+    return {
+      conversionRate,
+      finalStageCount: finalStageItems.length,
+      timeOpenMs,
+      slaMs,
+      averageScore,
+      hasScores,
+      adherenceScore,
+      hasAdherence,
+      adherenceLabel,
+      stageScoreSummary,
+      stageEffortSummary,
+      totalHoursSaved,
+      resumeEvaluations,
+      costSaved,
+      roiPercent,
+    }
+  }, [orderedStages, board, totalCandidates, applications, jobInfo])
+
+  useEffect(() => {
+    if (activeMainTab !== 'analytics') return
+    if (!board || stages.length === 0) return
+    const currentKey = ++requirementsLoadKey.current
+    setRequirementsSummary((prev) => ({ ...prev, loading: true }))
+
+    ;(async () => {
+      const requirementsMap = new Map<string, RequirementStat>()
+
+      for (const stage of orderedStages) {
+        const stageItems = board?.lanes?.[stage.id] ?? []
+        const applicationStageIds = stageItems
+          .map((item) => item.application_stage_id)
+          .filter((id): id is string => Boolean(id))
+        if (applicationStageIds.length === 0) continue
+
+        const requirementsRes = await api<{ items: { id: string; label: string }[] }>(
+          `/api/stages/${stage.id}/requirements`
+        ).catch(() => ({ items: [] }))
+        if (!requirementsRes.items.length) continue
+
+        requirementsRes.items.forEach((req) => {
+          requirementsMap.set(req.id, {
+            requirementId: req.id,
+            label: req.label,
+            stageId: stage.id,
+            stageName: stage.name,
+            matched: 0,
+            total: 0,
+            percent: 0,
+          })
+        })
+
+        const threshold = typeof stage.threshold === 'number' ? stage.threshold : 7
+        const scoreResponses = await Promise.all(
+          applicationStageIds.map((appStageId) =>
+            api<{ items: { requirement_id: string; value: number }[] }>(
+              `/api/stages/${stage.id}/scores?application_stage_id=${encodeURIComponent(appStageId)}`
+            ).catch(() => ({ items: [] }))
+          )
+        )
+
+        scoreResponses.forEach((res) => {
+          res.items.forEach((score) => {
+            const entry = requirementsMap.get(score.requirement_id)
+            if (!entry) return
+            entry.total += 1
+            if (Number(score.value) >= threshold) entry.matched += 1
+          })
+        })
+      }
+
+      const stats = Array.from(requirementsMap.values())
+        .map((entry) => ({
+          ...entry,
+          percent: entry.total > 0 ? (entry.matched / entry.total) * 100 : 0,
+        }))
+        .filter((entry) => entry.total > 0)
+
+      const most = [...stats].sort((a, b) => b.percent - a.percent).slice(0, 3)
+      const least = [...stats].sort((a, b) => a.percent - b.percent).slice(0, 3)
+
+      if (currentKey === requirementsLoadKey.current) {
+        setRequirementsSummary({ most, least, loading: false })
+      }
+    })().catch(() => {
+      if (currentKey === requirementsLoadKey.current) {
+        setRequirementsSummary({ most: [], least: [], loading: false })
+      }
+    })
+  }, [activeMainTab, board, stages, orderedStages])
+
   useEffect(() => {
     ;(async () => {
       const { id } = await params
       setJobId(id)
-      const job = await api<{ item?: { id: string; title: string } }>(`/api/jobs/${id}`)
+      const job = await api<{ item?: { id: string; title: string; created_at?: string | null; status?: string | null } }>(
+        `/api/jobs/${id}`
+      )
       if (!job?.item) {
         notify({ title: 'Vaga não encontrada', variant: 'error' })
         return
@@ -945,10 +1162,12 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
             <div className="rounded-3xl border border-gray-200 bg-white shadow-sm p-6 md:p-8">
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <div className="text-xs uppercase tracking-wide text-gray-500">Pipeline</div>
-                  <h2 className="mt-2 text-2xl font-semibold text-gray-900">Gerenciar Candidatos</h2>
-                  <p className="text-sm text-gray-600">Acompanhe todos os candidatos desta vaga em um único painel.</p>
-              </div>
+                  <div className="text-xs uppercase tracking-wide text-gray-500">Analytics & Relatórios</div>
+                  <h2 className="mt-2 text-2xl font-semibold text-gray-900">Resumo da Vaga</h2>
+                  <p className="text-sm text-gray-600">
+                    Indicadores principais do pipeline e desempenho da vaga.
+                  </p>
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -966,10 +1185,43 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                   >
                     Filtros
                   </button>
+                </div>
               </div>
-          </div>
 
               <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-indigo-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Conversão da vaga</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-indigo-700">
+                      {analyticsData.conversionRate.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    {analyticsData.finalStageCount} de {totalCandidates} candidatos na etapa final
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-sky-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Tempo em aberto</div>
+                  <div className="mt-2 text-3xl font-semibold text-sky-700">{formatDuration(analyticsData.timeOpenMs)}</div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    {jobInfo?.created_at ? 'Desde a criação da vaga' : 'Desde a primeira candidatura'}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">SLA de contratação</div>
+                  <div className="mt-2 text-3xl font-semibold text-emerald-700">{formatDuration(analyticsData.slaMs)}</div>
+                  <div className="text-xs text-gray-500 mt-2">Tempo médio até a etapa final</div>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
+                  <div className="text-sm text-gray-500">Nota média da vaga</div>
+                  <div className="mt-2 text-3xl font-semibold text-amber-700">
+                    {analyticsData.hasScores ? analyticsData.averageScore.toFixed(1) : '—'}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2">Média geral dos scores IA</div>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-gray-50 to-white p-6 shadow-sm">
                   <div className="text-sm text-gray-500">Total</div>
                   <div className="mt-2 flex items-baseline gap-2">
@@ -998,14 +1250,155 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                     <span className="text-xs text-amber-600 uppercase tracking-wide">candidatos inativos</span>
                   </div>
                 </div>
-          </div>
-        </div>
+              </div>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-3">
+              <div className="lg:col-span-2 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">Calculadora de ROI</h3>
+                  <p className="text-sm text-gray-600">
+                    Estimativas baseadas em parâmetros internos configurados.
+                  </p>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    Plano mensal: {formatCurrencyBRL(PLAN_MONTHLY_COST_BRL)}
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-3">
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+                    <div className="text-sm text-emerald-700">Tempo total economizado</div>
+                    <div className="mt-2 text-2xl font-semibold text-emerald-700">
+                      {analyticsData.totalHoursSaved.toFixed(1)}h
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-4">
+                    <div className="text-sm text-indigo-700">Custo evitado</div>
+                    <div className="mt-2 text-2xl font-semibold text-indigo-700">
+                      {formatCurrencyBRL(analyticsData.costSaved)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-amber-100 bg-amber-50/70 p-4">
+                    <div className="text-sm text-amber-700">ROI estimado</div>
+                    <div className="mt-2 text-2xl font-semibold text-amber-700">
+                      {analyticsData.roiPercent === null ? '—' : `${analyticsData.roiPercent.toFixed(0)}%`}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-gray-900">Horas economizadas por etapa</h4>
+                    <div className="text-xs text-gray-500">Base por candidato</div>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {analyticsData.stageEffortSummary.map((entry) => (
+                      <div key={entry.stageId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">{entry.stageName}</div>
+                            <div className="text-xs text-gray-500">
+                              {entry.count} candidatos · {entry.minutesPerCandidate} min cada
+                            </div>
+                          </div>
+                          <div className="text-sm font-semibold text-gray-900">
+                            {entry.totalHours.toFixed(1)}h
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {analyticsData.stageEffortSummary.length === 0 && (
+                      <div className="text-sm text-gray-500">Nenhuma etapa cadastrada.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-semibold text-gray-900">Índice de aderência</h3>
+                <p className="text-sm text-gray-600">
+                  Média do top 20% melhores candidatos (score final).
+                </p>
+                <div className="mt-6 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-5">
+                  <div className="text-sm text-emerald-700">Aderência da vaga</div>
+                  <div className="mt-2 text-3xl font-semibold text-emerald-700">
+                    {analyticsData.hasAdherence ? analyticsData.adherenceScore.toFixed(1) : '—'}
+                  </div>
+                  <div className="mt-1 text-xs text-emerald-700">{analyticsData.adherenceLabel}</div>
+                </div>
+                <div className="mt-6 space-y-2 text-xs text-gray-500">
+                  <div>0 a 6: precisa melhorar</div>
+                  <div>6.9 a 7.9: médio</div>
+                  <div>8 a 10: top</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-semibold text-gray-900">Requisitos menos atendidos</h3>
+                <p className="text-sm text-gray-600">Baseado nos scores de requisitos por candidato.</p>
+                <div className="mt-4 space-y-3">
+                  {requirementsSummary.loading && <div className="text-sm text-gray-500">Carregando...</div>}
+                  {!requirementsSummary.loading && requirementsSummary.least.length === 0 && (
+                    <div className="text-sm text-gray-500">Sem dados suficientes.</div>
+                  )}
+                  {requirementsSummary.least.map((req) => (
+                    <div key={req.requirementId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                      <div className="text-sm font-medium text-gray-900">{req.label}</div>
+                      <div className="text-xs text-gray-500">
+                        {req.stageName} · {req.percent.toFixed(0)}% ({req.matched}/{req.total})
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-semibold text-gray-900">Requisitos mais atendidos</h3>
+                <p className="text-sm text-gray-600">Baseado nos scores de requisitos por candidato.</p>
+                <div className="mt-4 space-y-3">
+                  {requirementsSummary.loading && <div className="text-sm text-gray-500">Carregando...</div>}
+                  {!requirementsSummary.loading && requirementsSummary.most.length === 0 && (
+                    <div className="text-sm text-gray-500">Sem dados suficientes.</div>
+                  )}
+                  {requirementsSummary.most.map((req) => (
+                    <div key={req.requirementId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                      <div className="text-sm font-medium text-gray-900">{req.label}</div>
+                      <div className="text-xs text-gray-500">
+                        {req.stageName} · {req.percent.toFixed(0)}% ({req.matched}/{req.total})
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h3 className="text-lg font-semibold text-gray-900">Nota média por etapa</h3>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {analyticsData.stageScoreSummary.map((stage) => (
+                  <div key={stage.stageId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                    <div className="text-sm font-medium text-gray-900">{stage.stageName}</div>
+                    <div className="text-xs text-gray-500">Média de score IA</div>
+                    <div className="mt-2 text-lg font-semibold text-gray-900">
+                      {stage.averageScore !== null ? stage.averageScore.toFixed(1) : '—'}
+                    </div>
+                  </div>
+                ))}
+                {analyticsData.stageScoreSummary.length === 0 && (
+                  <div className="text-sm text-gray-500">Nenhuma etapa cadastrada.</div>
+                )}
+              </div>
+            </div>
 
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Ranking de Candidatos</h3>
               <Panel jobId={jobId} />
-                          </div>
-                          </div>
+            </div>
+          </div>
         )}
 
         {activeMainTab === 'etapas' && (

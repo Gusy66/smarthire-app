@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../../_lib/supabaseAdmin'
 import { requireUser } from '../../_lib/auth'
+import { requirePermission } from '../../_lib/permissions'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -51,7 +52,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const { data: job, error } = await supabase
     .from('jobs')
     .select(
-      `id, title, description, location, salary, work_model, contract_type, requirements, skills, benefits, department, job_description, responsibilities, requirements_and_skills, work_schedule, travel_availability, observations, status, created_by, company_id`
+      `id, title, description, location, salary, work_model, contract_type, requirements, skills, benefits, department, job_description, responsibilities, requirements_and_skills, work_schedule, travel_availability, observations, status, created_at, created_by, company_id`
     )
     .eq('id', jobId)
     .maybeSingle()
@@ -75,13 +76,22 @@ export async function PUT(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'validation_error', message: 'Nenhuma alteração válida fornecida' } }, { status: 400 })
   }
 
-  const supabase = getSupabaseAdmin()
+  // Verificar permissão para editar vagas
   let user
   try {
-    user = await requireUser()
+    user = await requirePermission('criar_editar_vagas')
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown'
+    if (message === 'unauthorized') {
+      return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
+    }
+    if (message.startsWith('permission_denied')) {
+      return Response.json({ error: { code: 'forbidden', message: 'Você não tem permissão para editar vagas' } }, { status: 403 })
+    }
     return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
   }
+
+  const supabase = getSupabaseAdmin()
 
   const { data: job, error: jobErr } = await supabase
     .from('jobs')
@@ -106,13 +116,23 @@ export async function PUT(req: NextRequest, { params }: Params) {
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id: jobId } = await params
-  const supabase = getSupabaseAdmin()
+  
+  // Verificar permissão para deletar vagas
   let user
   try {
-    user = await requireUser()
+    user = await requirePermission('criar_editar_vagas')
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown'
+    if (message === 'unauthorized') {
+      return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
+    }
+    if (message.startsWith('permission_denied')) {
+      return Response.json({ error: { code: 'forbidden', message: 'Você não tem permissão para excluir vagas' } }, { status: 403 })
+    }
     return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
   }
+
+  const supabase = getSupabaseAdmin()
 
   const { data: job, error: jobError } = await supabase
     .from('jobs')

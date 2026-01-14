@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { getSupabaseAdmin } from '../../_lib/supabaseAdmin'
 import { requireUser } from '../../_lib/auth'
+import { requirePermission } from '../../_lib/permissions'
 
 export async function GET(
   req: NextRequest,
@@ -36,8 +37,9 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Verificar permissão para editar prompts
+    const user = await requirePermission('criar_prompts')
     const supabase = getSupabaseAdmin()
-    const user = await requireUser()
     const { id } = await params
 
     const body = await req.json()
@@ -81,6 +83,9 @@ export async function PUT(
     if (error?.message === 'unauthorized') {
       return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
     }
+    if (error?.message?.startsWith('permission_denied')) {
+      return Response.json({ error: { code: 'forbidden', message: 'Você não tem permissão para editar prompts' } }, { status: 403 })
+    }
     return Response.json({ error: { code: 'internal_error', message: 'Erro interno do servidor' } }, { status: 500 })
   }
 }
@@ -90,8 +95,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Verificar permissão para deletar prompts
+    const user = await requirePermission('criar_prompts')
     const supabase = getSupabaseAdmin()
-    const user = await requireUser()
     const { id } = await params
 
     const { error } = await supabase
@@ -108,6 +114,9 @@ export async function DELETE(
   } catch (error: any) {
     if (error?.message === 'unauthorized') {
       return Response.json({ error: { code: 'unauthorized', message: 'Usuário não autenticado' } }, { status: 401 })
+    }
+    if (error?.message?.startsWith('permission_denied')) {
+      return Response.json({ error: { code: 'forbidden', message: 'Você não tem permissão para excluir prompts' } }, { status: 403 })
     }
     return Response.json({ error: { code: 'internal_error', message: 'Erro interno do servidor' } }, { status: 500 })
   }

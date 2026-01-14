@@ -50,6 +50,18 @@ export default function Sidebar() {
       isActive: pathname?.startsWith('/candidates'),
     },
     {
+      href: '/usuarios',
+      label: 'Usuários',
+      icon: (
+        <svg className="w-6 h-6 lg:w-7 lg:h-7" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+          <circle cx="18" cy="6" r="2" fill="currentColor"/>
+          <path d="M18 9c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2z" opacity="0.5"/>
+        </svg>
+      ),
+      isActive: pathname?.startsWith('/usuarios'),
+    },
+    {
       href: '/settings',
       label: 'Configurações',
       icon: (
