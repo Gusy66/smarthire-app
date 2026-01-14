@@ -2,25 +2,76 @@ import Link from 'next/link'
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-gradient">
+    <div className="min-h-screen bg-white">
+      <header className="border-b border-gray-100 bg-white/70 backdrop-blur">
+        <div className="container-page flex items-center justify-between py-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-semibold">
+              SH
+            </div>
+            <span className="text-lg font-semibold text-gray-900">SmartHire</span>
+          </div>
+          <nav className="hidden lg:flex items-center gap-8 text-sm text-gray-600">
+            <a href="#solucao" className="hover:text-gray-900 transition-colors">Solução</a>
+            <a href="#beneficios" className="hover:text-gray-900 transition-colors">Benefícios</a>
+            <a href="#depoimentos" className="hover:text-gray-900 transition-colors">Depoimentos</a>
+            <a href="#contato" className="hover:text-gray-900 transition-colors">Contato</a>
+          </nav>
+          <div className="flex items-center gap-3">
+            <Link href="/dashboard" className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
+              Login
+            </Link>
+            <Link href="/settings/ai" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors">
+              Fale Conosco
+            </Link>
+          </div>
+        </div>
+      </header>
+
       {/* Hero Section */}
-      <section className="container-page py-20">
-        <div className="text-center max-w-4xl mx-auto">
-          <h1 className="text-5xl font-bold text-gray-900 mb-6">
-            Revolucione seu{' '}
-            <span className="text-gradient">processo seletivo</span>
-          </h1>
-          <p className="text-xl text-gray-600 mb-8 leading-relaxed">
-            SmartHire utiliza inteligência artificial para analisar candidatos de forma objetiva, 
-            justa e eficiente. Encontre os melhores talentos para sua empresa.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href="/dashboard" className="btn btn-primary text-lg px-8 py-4">
-              🚀 Começar Agora
-            </Link>
-            <Link href="/settings/ai" className="btn btn-outline text-lg px-8 py-4">
-              ⚙️ Configurar IA
-            </Link>
+      <section className="container-page pt-16 pb-20">
+        <div className="grid gap-12 lg:grid-cols-2 lg:items-center">
+          <div className="max-w-xl">
+            <span className="inline-flex items-center rounded-full bg-emerald-50 px-4 py-1 text-xs font-semibold text-emerald-700">
+              Inteligência Artificial para RH
+            </span>
+            <h1 className="mt-4 text-5xl font-bold text-gray-900 leading-tight">
+              Revolucione seu{' '}
+              <span className="text-emerald-600">processo seletivo</span>
+            </h1>
+            <p className="mt-6 text-lg text-gray-600 leading-relaxed">
+              SmartHire utiliza inteligência artificial para analisar candidatos de forma objetiva, 
+              justa e eficiente. Encontre os melhores talentos para sua empresa.
+            </p>
+            <div className="mt-8 flex flex-col sm:flex-row gap-4">
+              <Link href="/dashboard" className="rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 transition-colors">
+                🚀 Começar Agora
+              </Link>
+              <Link href="/settings/ai" className="rounded-xl border border-gray-200 px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
+                ⚙️ Configurar IA
+              </Link>
+            </div>
+          </div>
+
+          <div className="rounded-3xl bg-gradient-to-br from-emerald-500 to-emerald-700 p-6 shadow-xl">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl bg-emerald-50/90 p-4 shadow-sm">
+                <div className="text-xs font-semibold text-emerald-700">Tempo de Triagem</div>
+                <div className="mt-2 text-2xl font-bold text-emerald-700">-70%</div>
+              </div>
+              <div className="rounded-2xl bg-emerald-50/90 p-4 shadow-sm">
+                <div className="text-xs font-semibold text-emerald-700">Qualidade</div>
+                <div className="mt-2 text-2xl font-bold text-emerald-700">+40%</div>
+              </div>
+              <div className="rounded-2xl bg-emerald-50/90 p-4 shadow-sm">
+                <div className="text-xs font-semibold text-emerald-700">ROI</div>
+                <div className="mt-2 text-2xl font-bold text-emerald-700">300%</div>
+              </div>
+              <div className="rounded-2xl bg-emerald-50/90 p-4 shadow-sm">
+                <div className="text-xs font-semibold text-emerald-700">Turnover</div>
+                <div className="mt-2 text-2xl font-bold text-emerald-700">-35%</div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
