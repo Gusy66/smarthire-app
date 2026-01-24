@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useToast } from '@/components/ToastProvider'
 import CandidateDetailModal from '@/components/CandidateDetailModal'
@@ -77,7 +77,7 @@ function parseCsv(text: string) {
     .filter((row) => row.some((cell) => cell !== ''))
 }
 
-export default function CandidatesPage() {
+function CandidatesPageContent() {
   const { notify } = useToast()
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [loading, setLoading] = useState(false)
@@ -131,7 +131,6 @@ export default function CandidatesPage() {
 
   useEffect(() => {
     load()
-     
   }, [page])
 
   useEffect(() => {
@@ -1158,6 +1157,14 @@ export default function CandidatesPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function CandidatesPage() {
+  return (
+    <Suspense fallback={<div />}>
+      <CandidatesPageContent />
+    </Suspense>
   )
 }
 
