@@ -7,6 +7,7 @@ export type BoardLaneItem = {
   stage_id: string
   score: number | null
   application_created_at?: string
+  evaluation_count?: number
 }
 
 export type BoardResponse = { stages: Stage[]; lanes: Record<string, BoardLaneItem[]> }

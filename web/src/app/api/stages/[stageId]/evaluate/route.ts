@@ -44,8 +44,17 @@ export async function POST(req: NextRequest, { params }: Params) {
   console.log('[DEBUG API] Obtendo Supabase admin...')
   const supabase = getSupabaseAdmin()
 
-  // Se não foi enviado currículo explicitamente, buscar do candidato
-  if (!resume_path) {
+  // Se não foi enviado currículo explicitamente, buscar do candidato (exceto etapa de transcrição)
+  const { data: stageInfo } = await supabase
+    .from('job_stages')
+    .select('analysis_type')
+    .eq('id', stageId)
+    .maybeSingle()
+
+  const shouldSkipResume =
+    stageInfo?.analysis_type === 'transcript' || Boolean(transcript_path || transcript_signed_url)
+
+  if (!resume_path && !shouldSkipResume) {
     console.log('[DEBUG API] Buscando currículo do candidato via application_id...')
     const { data: appData, error: appError } = await supabase
       .from('applications')
@@ -88,7 +97,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Garante application_stage
   const { data: stage } = await supabase
     .from('job_stages')
-    .select('id, name, threshold, stage_weight, description, jobs(description)')
+    .select('id, name, threshold, stage_weight, description, analysis_type, jobs(description)')
     .eq('id', stageId)
     .single()
   const { data: appStageExisting } = await supabase

@@ -124,8 +124,9 @@ export default function CandidateDrawer({
         application_id: applicationId,
         application_stage_id: applicationStageId,
         candidate_id: candidate.id,
-        document_path: uploadJson.path,
-        document_signed_url: uploadJson.view_url,
+        transcript_path: uploadJson.path,
+        transcript_bucket: uploadJson.bucket,
+        transcript_signed_url: uploadJson.view_url,
       })
       
       notify({ title: 'Análise iniciada', description: 'A IA está processando a transcrição.', variant: 'success' })

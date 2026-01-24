@@ -42,6 +42,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       id, 
       job_id, 
       created_at,
+      status,
       jobs(id, title, status)
     `)
     .eq('candidate_id', candidateId)
@@ -88,8 +89,13 @@ export async function GET(_req: NextRequest, { params }: Params) {
       const allSucceeded = stagesWithStatus.length > 0 && stagesWithStatus.every((s) => s.status === 'succeeded')
       
       let finalStatus: 'pending' | 'approved' | 'rejected' = 'pending'
-      if (allSucceeded) finalStatus = 'approved'
-      else if (hasFailed) finalStatus = 'rejected'
+      if (app.status === 'approved' || app.status === 'rejected') {
+        finalStatus = app.status
+      } else if (allSucceeded) {
+        finalStatus = 'approved'
+      } else if (hasFailed) {
+        finalStatus = 'rejected'
+      }
 
       return {
         id: app.id,
@@ -159,11 +165,15 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   // Adicionar logs de auditoria
   for (const log of auditLogs || []) {
+    const jobId = log.metadata?.job_id || log.metadata?.jobId || null
+    const jobTitle = log.metadata?.job_title || log.metadata?.jobTitle || null
     history.push({
       date: log.created_at,
       action: log.action,
       description: formatAuditAction(log.action, log.metadata),
       type: 'audit',
+      job_id: jobId,
+      job_title: jobTitle,
     })
   }
 
@@ -176,6 +186,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
           action: stage.status === 'succeeded' ? 'stage_approved' : stage.status === 'failed' ? 'stage_rejected' : 'stage_updated',
           description: `Etapa "${stage.name}" - ${formatStageStatus(stage.status)}`,
           type: 'stage',
+          job_id: app.job_id,
           job_title: app.job_title,
         })
       }
@@ -232,14 +243,21 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'unauthorized', message: 'Não autenticado' } }, { status: 401 })
   }
 
-  const body = await req.json()
-  const { resume_path, resume_bucket } = body || {}
-
-  if (!resume_path || !resume_bucket) {
-    return Response.json({
-      error: { code: 'validation_error', message: 'resume_path e resume_bucket são obrigatórios' },
-    }, { status: 400 })
-  }
+  const body = await req.json().catch(() => ({}))
+  const {
+    resume_path,
+    resume_bucket,
+    name,
+    email,
+    phone,
+    city,
+    state,
+    address,
+    gender,
+    education,
+    languages,
+    children,
+  } = body || {}
 
   const { data: candidate, error: fetchError } = await supabase
     .from('candidates')
@@ -259,17 +277,44 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'forbidden', message: 'Acesso negado' } }, { status: 403 })
   }
 
-  const normalizedPath = normalizeStoragePath(resume_path, resume_bucket)
-  if (!normalizedPath) {
-    return Response.json({ error: { code: 'validation_error', message: 'resume_path inválido' } }, { status: 400 })
+  const updateData: Record<string, any> = {}
+
+  if (typeof name === 'string') updateData.name = name.trim()
+  if (typeof email === 'string') updateData.email = email.trim() || null
+  if (typeof phone === 'string') updateData.phone = phone.trim() || null
+  if (typeof city === 'string') updateData.city = city.trim() || null
+  if (typeof state === 'string') updateData.state = state.trim() || null
+  if (typeof address === 'string') updateData.address = address.trim() || null
+  if (typeof gender === 'string') updateData.gender = gender.trim() || null
+  if (typeof education === 'string') updateData.education = education.trim() || null
+  if (Array.isArray(languages)) updateData.languages = languages
+  if (typeof children === 'number') updateData.children = Number.isFinite(children) ? children : null
+  if (typeof children === 'string' && children.trim() !== '') {
+    const parsed = Number(children)
+    updateData.children = Number.isFinite(parsed) ? parsed : null
+  }
+
+  if (resume_path || resume_bucket) {
+    if (!resume_path || !resume_bucket) {
+      return Response.json({
+        error: { code: 'validation_error', message: 'resume_path e resume_bucket são obrigatórios' },
+      }, { status: 400 })
+    }
+    const normalizedPath = normalizeStoragePath(resume_path, resume_bucket)
+    if (!normalizedPath) {
+      return Response.json({ error: { code: 'validation_error', message: 'resume_path inválido' } }, { status: 400 })
+    }
+    updateData.resume_path = normalizedPath
+    updateData.resume_bucket = resume_bucket
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    return Response.json({ error: { code: 'validation_error', message: 'Nenhum dado para atualizar' } }, { status: 400 })
   }
 
   const { error: updateError } = await supabase
     .from('candidates')
-    .update({
-      resume_path: normalizedPath,
-      resume_bucket,
-    })
+    .update(updateData)
     .eq('id', candidateId)
 
   if (updateError) {

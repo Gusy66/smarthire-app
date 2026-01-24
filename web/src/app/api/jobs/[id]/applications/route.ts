@@ -30,7 +30,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const { data: apps, error } = await supabase
     .from('applications')
-    .select('id, candidate_id, created_at')
+    .select('id, candidate_id, created_at, status')
     .eq('job_id', jobId)
     .order('created_at', { ascending: false })
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })

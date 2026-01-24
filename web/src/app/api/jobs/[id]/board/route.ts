@@ -47,6 +47,14 @@ export async function GET(_req: NextRequest, { params }: Params) {
     // considerar apenas etapas ativas (não decididas)
     appStages = (data ?? []).filter((x) => x.decided_at == null)
   }
+  const allAppStages = applicationIds.length
+    ? (
+        await supabase
+          .from('application_stages')
+          .select('id, application_id, stage_id')
+          .in('application_id', applicationIds)
+      ).data ?? []
+    : []
 
   const candidateIds = [...new Set((applications ?? []).map((a) => a.candidate_id))]
   const { data: candidates, error: candError } = await supabase
@@ -59,6 +67,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   // Map de score direto por app_stage (fallback) a partir de última run
   const appStageIds = appStages.map((as) => as.id)
   const latestRunScoreByAppStage = new Map<string, number>()
+  const runCountByAppStage = new Map<string, number>()
   if (appStageIds.length) {
     const { data: runs, error: runsError } = await supabase
       .from('stage_ai_runs')
@@ -68,9 +77,47 @@ export async function GET(_req: NextRequest, { params }: Params) {
       .order('created_at', { ascending: false })
     if (!runsError && runs) {
       for (const r of runs) {
+        if (r.status === 'succeeded') {
+          runCountByAppStage.set(
+            r.application_stage_id,
+            (runCountByAppStage.get(r.application_stage_id) ?? 0) + 1
+          )
+        }
         if (latestRunScoreByAppStage.has(r.application_stage_id)) continue
         if (r.status === 'succeeded' && r.result && typeof r.result.score === 'number') {
           latestRunScoreByAppStage.set(r.application_stage_id, Math.max(0, Math.min(10, Number(r.result.score))))
+        }
+      }
+    }
+  }
+
+  const evaluationCountsByStageId: Record<string, number> = {}
+  const latestScoreByApplicationId: Record<string, number> = {}
+  const allAppStageIds = allAppStages.map((s) => s.id)
+  if (allAppStageIds.length) {
+    const { data: allRuns } = await supabase
+      .from('stage_ai_runs')
+      .select('application_stage_id, status, result, created_at')
+      .in('application_stage_id', allAppStageIds)
+      .eq('type', 'evaluate')
+      .order('created_at', { ascending: false })
+    if (allRuns) {
+      const stageInfoByAppStage = new Map(allAppStages.map((s) => [s.id, s]))
+      for (const run of allRuns) {
+        if (run.status !== 'succeeded') continue
+        const stageInfo = stageInfoByAppStage.get(run.application_stage_id)
+        if (stageInfo) {
+          evaluationCountsByStageId[stageInfo.stage_id] =
+            (evaluationCountsByStageId[stageInfo.stage_id] ?? 0) + 1
+        }
+        if (stageInfo && latestScoreByApplicationId[stageInfo.application_id] == null) {
+          const score =
+            run.result && typeof (run.result as any).score === 'number'
+              ? Math.max(0, Math.min(10, Number((run.result as any).score)))
+              : null
+          if (score != null) {
+            latestScoreByApplicationId[stageInfo.application_id] = score
+          }
         }
       }
     }
@@ -95,12 +142,18 @@ export async function GET(_req: NextRequest, { params }: Params) {
         candidate: candidate || { id: app.candidate_id },
         stage_id: stage.id,
         score: latestRunScoreByAppStage.get(appStageId) ?? null,
+        evaluation_count: runCountByAppStage.get(appStageId) ?? 0,
         application_created_at: app.created_at,
       })
     }
   }
 
-  return Response.json({ stages: stages ?? [], lanes: stageIdToItems })
+  return Response.json({
+    stages: stages ?? [],
+    lanes: stageIdToItems,
+    evaluation_counts_by_stage_id: evaluationCountsByStageId,
+    latest_scores_by_application_id: latestScoreByApplicationId,
+  })
 }
 
 

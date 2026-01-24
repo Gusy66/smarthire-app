@@ -38,7 +38,27 @@ export async function getLatestAnalysis(
   return json?.item || null
 }
 
-export async function evaluate(stageId: string, payload: { application_id: string; application_stage_id: string; candidate_id: string }): Promise<{ run_id?: string }> {
+export async function evaluate(
+  stageId: string,
+  payload: {
+    application_id: string
+    application_stage_id: string
+    candidate_id: string
+    resume_path?: string
+    resume_bucket?: string
+    resume_signed_url?: string
+    transcript_path?: string
+    transcript_bucket?: string
+    transcript_signed_url?: string
+    document_path?: string
+    document_bucket?: string
+    document_signed_url?: string
+    document_type?: string
+    audio_path?: string
+    audio_bucket?: string
+    audio_signed_url?: string
+  }
+): Promise<{ run_id?: string }> {
   const res = await fetch(`/api/stages/${stageId}/evaluate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

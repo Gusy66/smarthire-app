@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useToast } from '@/components/ToastProvider'
 import CandidateDetailModal from '@/components/CandidateDetailModal'
 
@@ -23,6 +24,7 @@ type Candidate = {
   avg_score?: number | null;
   latest_stage_id?: string | null;
   latest_stage_name?: string | null;
+  latest_application_status?: 'pending' | 'approved' | 'rejected' | string | null;
   resume_path?: string | null;
   resume_bucket?: string | null;
 }
@@ -114,6 +116,7 @@ export default function CandidatesPage() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [assigningJob, setAssigningJob] = useState(false)
   const [selectedJobForAssign, setSelectedJobForAssign] = useState<string>('')
+  const searchParams = useSearchParams()
 
   async function load() {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
@@ -128,7 +131,7 @@ export default function CandidatesPage() {
 
   useEffect(() => {
     load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [page])
 
   useEffect(() => {
@@ -145,6 +148,15 @@ export default function CandidatesPage() {
       .then((j) => setAvailableStages(j.items || []))
       .catch(() => setAvailableStages([]))
   }, [form.job_id])
+
+  useEffect(() => {
+    const candidateId = searchParams.get('candidateId')
+    if (!candidateId) return
+    if (isDetailModalOpen && selected?.id === candidateId) return
+    const candidate = candidates.find((c) => c.id === candidateId)
+    setSelected(candidate ?? { id: candidateId, name: 'Candidato' })
+    setIsDetailModalOpen(true)
+  }, [searchParams, candidates, isDetailModalOpen, selected?.id])
 
   async function uploadResume(
     file: File,
@@ -542,6 +554,7 @@ export default function CandidatesPage() {
                   <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium">Candidato</th>
                   <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium hidden md:table-cell">Vaga</th>
                   <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium hidden lg:table-cell">Etapa</th>
+                  <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium">Status</th>
                   <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium">Score</th>
                   <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium hidden sm:table-cell">Data</th>
                   <th className="py-2.5 sm:py-3 px-3 sm:px-5 font-medium">CV</th>
@@ -560,7 +573,17 @@ export default function CandidatesPage() {
                             {(c.name||c.id).slice(0,2).toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <div className="font-medium text-gray-900 text-xs sm:text-sm truncate max-w-[120px] sm:max-w-none">{c.name}</div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelected(c)
+                                setIsDetailModalOpen(true)
+                              }}
+                              className="text-left font-medium text-blue-700 hover:text-blue-800 hover:underline text-xs sm:text-sm truncate max-w-[120px] sm:max-w-none"
+                              title="Visualizar"
+                            >
+                              {c.name}
+                            </button>
                             <div className="text-[10px] sm:text-xs text-gray-600 truncate max-w-[120px] sm:max-w-none">{c.email}</div>
                           </div>
                         </div>
@@ -569,6 +592,21 @@ export default function CandidatesPage() {
                         <span className="truncate block max-w-[150px]">{c.latest_job_title ?? '—'}</span>
                       </td>
                       <td className="py-3 sm:py-4 px-3 sm:px-5 text-gray-700 hidden lg:table-cell">{c.latest_stage_name ?? '—'}</td>
+                      <td className="py-3 sm:py-4 px-3 sm:px-5">
+                        {c.latest_application_status === 'approved' ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-emerald-100 text-emerald-800">
+                            Aprovado
+                          </span>
+                        ) : c.latest_application_status === 'rejected' ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-red-100 text-red-800">
+                            Reprovado
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-amber-100 text-amber-800">
+                            Em análise
+                          </span>
+                        )}
+                      </td>
                       <td className="py-3 sm:py-4 px-3 sm:px-5">
                         {score == null ? '—' : (
                           <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-green-100 text-green-800">

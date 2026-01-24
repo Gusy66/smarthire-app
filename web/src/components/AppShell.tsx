@@ -4,31 +4,34 @@ import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Sidebar from './Sidebar'
 import NavBar from './NavBar'
+import { getSupabaseBrowser } from '@/lib/supabaseBrowser'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const supabase = getSupabaseBrowser()
   
   // Rotas que não devem mostrar o layout principal (Sidebar/NavBar)
   const isExcludedRoute = pathname?.startsWith('/platform')
 
   useEffect(() => {
     let active = true
-    async function checkSession() {
-      try {
-        const res = await fetch('/api/auth/me', { credentials: 'same-origin' })
-        if (!active) return
-        setIsAuthenticated(res.ok)
-      } catch {
-        if (!active) return
-        setIsAuthenticated(false)
-      }
-    }
-    checkSession()
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return
+      setIsAuthenticated(!!data.session)
+    })
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return
+      setIsAuthenticated(!!session)
+    })
+
     return () => {
       active = false
+      subscription.subscription.unsubscribe()
     }
-  }, [])
+  }, [supabase])
   
   if (isExcludedRoute || isAuthenticated !== true) {
     // Renderizar apenas o conteúdo sem Sidebar/NavBar

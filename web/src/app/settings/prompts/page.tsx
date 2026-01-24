@@ -168,7 +168,7 @@ export default function PromptTemplatesPage() {
   const defaultTemplate = useMemo(() => templates.find((t) => t.is_default) || null, [templates])
 
   return (
-    <div className="min-h-screen bg-gradient py-8">
+    <div className="min-h-screen bg-[hsl(var(--background))] py-8">
       <div className="container-page max-w-6xl mx-auto space-y-8">
         <div className="flex items-center justify-between">
           <div>

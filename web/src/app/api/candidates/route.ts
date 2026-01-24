@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
 
   const { data: apps } = await supabase
     .from('applications')
-    .select('id, candidate_id, job_id, created_at, jobs(title)')
+    .select('id, candidate_id, job_id, created_at, status, jobs(title)')
     .in('candidate_id', candidateIds)
     .order('created_at', { ascending: false })
 
@@ -130,6 +130,7 @@ export async function GET(req: NextRequest) {
       latest_job_title: latestApp?.jobs?.title ?? null,
       latest_stage_id: latestStage?.id || null,
       latest_stage_name: latestStage?.name || null,
+      latest_application_status: latestApp?.status ?? 'pending',
       latest_activity_at,
       avg_score,
     }

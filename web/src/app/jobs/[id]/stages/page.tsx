@@ -1,11 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useToast } from '@/components/ToastProvider'
 import StageAnalysisPanel from './_components/StageAnalysisPanel'
 import JobStageHeader from './_components/JobStageHeader'
 import CandidatesTable from './_components/CandidatesTable'
-import CandidatesFilters, { CandidateFilters as CF } from './_components/CandidatesFilters'
 
 type Stage = { id: string; name: string; description: string | null; order_index: number; threshold: number; stage_weight: number; analysis_type?: 'resume' | 'transcript' }
 type Candidate = { id: string; name: string; email?: string }
@@ -108,16 +108,6 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return (json ?? {}) as T
 }
 
-type RequirementStat = {
-  requirementId: string
-  label: string
-  stageId: string
-  stageName: string
-  matched: number
-  total: number
-  percent: number
-}
-
 const ESTIMATED_MINUTES = {
   resume: 10,
   transcript: 20,
@@ -140,6 +130,14 @@ function formatDuration(ms: number | null) {
   const days = Math.floor(totalHours / 24)
   const hours = totalHours % 24
   return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+}
+
+function formatMinutesToHours(totalMinutes: number) {
+  if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return '0 min'
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = Math.round(totalMinutes % 60)
+  if (hours <= 0) return `${minutes} min`
+  return minutes > 0 ? `${hours}h ${minutes}min` : `${hours}h`
 }
 
 function getStageEffortMinutes(stage: Stage) {
@@ -166,17 +164,18 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         candidate: any
         score: number | null
         stage_id?: string
+        evaluation_count?: number
         application_created_at?: string | null
       }[]
     >
     stages: Stage[]
   } | null>(null)
   const [selectedForBulk, setSelectedForBulk] = useState<Record<string, boolean>>({})
-  const [filters, setFilters] = useState<CF>({ query: '' })
   const [currentItem, setCurrentItem] = useState<{ application_id: string; application_stage_id: string; candidate: { id: string; name?: string } } | null>(null)
   const [stageForm, setStageForm] = useState({ name: '', description: '', threshold: 0, stage_weight: 1 })
   const [editingStageId, setEditingStageId] = useState<string | null>(null)
   const [editingStageForm, setEditingStageForm] = useState<{ name: string; description: string; threshold: number; stage_weight: number }>({ name: '', description: '', threshold: 0, stage_weight: 1 })
+  const [updatingStage, setUpdatingStage] = useState(false)
 
   // Candidates assigned to the job (simplificado: todos candidatos do tenant)
   const [candidates, setCandidates] = useState<Candidate[]>([])
@@ -190,19 +189,17 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [analysisByStage, setAnalysisByStage] = useState<Record<string, StageAnalysisResult | null>>({})
   const [analysisLoading, setAnalysisLoading] = useState<Record<string, boolean>>({})
   const [analysisExpanded, setAnalysisExpanded] = useState<Record<string, boolean>>({})
-  const [requirementsSummary, setRequirementsSummary] = useState<{
-    most: RequirementStat[]
-    least: RequirementStat[]
-    loading: boolean
-  }>({ most: [], least: [], loading: false })
-  const requirementsLoadKey = useRef(0)
+  const [showFullStageDescription, setShowFullStageDescription] = useState(false)
   const pollingTimeouts = useRef<Record<string, number>>({})
+  const [stageEvaluationCounts, setStageEvaluationCounts] = useState<Record<string, number>>({})
+  const [latestScoresByApplication, setLatestScoresByApplication] = useState<Record<string, number>>({})
   
   // Estado para atribuição de candidatos
   const [candidateSearchQuery, setCandidateSearchQuery] = useState('')
   const [selectedCandidatesToAssign, setSelectedCandidatesToAssign] = useState<Record<string, boolean>>({})
   const [assigningCandidates, setAssigningCandidates] = useState(false)
   const [showCandidateAssignment, setShowCandidateAssignment] = useState(false)
+  const [candidatesSort, setCandidatesSort] = useState<'name' | 'score'>('name')
   
   // Estado para modal de adicionar etapa
   const [showAddStageModal, setShowAddStageModal] = useState(false)
@@ -227,6 +224,10 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       Object.values(pollingTimeouts.current).forEach((timeoutId) => window.clearTimeout(timeoutId))
     }
   }, [])
+
+  useEffect(() => {
+    setShowFullStageDescription(false)
+  }, [activeTab])
 
   const orderedStages = useMemo(() => {
     return [...stages].sort((a, b) => a.order_index - b.order_index)
@@ -264,6 +265,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       const candidateName = app.candidate?.name || laneItem?.candidate?.name || 'Sem nome'
       const candidateEmail = app.candidate?.email || laneItem?.candidate?.email || ''
 
+      const fallbackScore = latestScoresByApplication[app.id] ?? null
       return {
         applicationId: app.id,
         candidateId: app.candidate_id,
@@ -271,12 +273,27 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         email: candidateEmail,
         stageId: laneItem?.stage_id ?? null,
         stageName: stage?.name ?? null,
-        score: laneItem?.score ?? null,
+        score: laneItem?.score ?? fallbackScore,
         appliedAt: app.created_at,
         status: laneItem ? 'Ativo' : 'Não ativo',
       }
     })
-  }, [applications, laneItemByApplicationId, stageById])
+  }, [applications, laneItemByApplicationId, stageById, latestScoresByApplication])
+
+  const sortedCandidateRows = useMemo(() => {
+    const list = [...candidateRows]
+    list.sort((a, b) => {
+      if (candidatesSort === 'score') {
+        const aScore = typeof a.score === 'number' ? a.score : -Infinity
+        const bScore = typeof b.score === 'number' ? b.score : -Infinity
+        if (bScore !== aScore) return bScore - aScore
+      }
+      const aName = (a.name || '').toLowerCase()
+      const bName = (b.name || '').toLowerCase()
+      return aName.localeCompare(bName, 'pt-BR')
+    })
+    return list
+  }, [candidateRows, candidatesSort])
 
   const firstStageId = orderedStages[0]?.id ?? null
   const totalCandidates = candidateRows.length
@@ -287,9 +304,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const analyticsData = useMemo(() => {
     const now = Date.now()
     const stageList = orderedStages
-    const lastStageId = stageList[stageList.length - 1]?.id ?? null
-    const finalStageItems = lastStageId ? board?.lanes?.[lastStageId] ?? [] : []
-    const conversionRate = totalCandidates > 0 ? (finalStageItems.length / totalCandidates) * 100 : 0
+    const approvedCount = applications.filter((app) => app.status === 'approved').length
+    const conversionRate = totalCandidates > 0 ? (approvedCount / totalCandidates) * 100 : 0
 
     const applicationTimes = applications
       .map((app) => (app?.created_at ? new Date(app.created_at).getTime() : null))
@@ -298,13 +314,13 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     const jobCreatedAt = jobInfo?.created_at ? new Date(jobInfo.created_at).getTime() : earliestApplication
     const timeOpenMs = jobCreatedAt ? now - jobCreatedAt : null
 
-    const slaCandidates = finalStageItems.filter((item) => Boolean(item.application_created_at))
+    const approvedApps = applications.filter((app) => app.status === 'approved')
     const slaMs =
-      slaCandidates.length > 0
-        ? slaCandidates.reduce((sum, item) => {
-            const createdAt = item.application_created_at ? new Date(item.application_created_at).getTime() : now
+      approvedApps.length > 0
+        ? approvedApps.reduce((sum, app) => {
+            const createdAt = app.created_at ? new Date(app.created_at).getTime() : now
             return sum + (now - createdAt)
-          }, 0) / slaCandidates.length
+          }, 0) / approvedApps.length
         : null
 
     const allScores = Object.values(board?.lanes ?? {}).flatMap((items) =>
@@ -331,26 +347,28 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     })
 
     const stageEffortSummary = stageList.map((stage) => {
-      const count = board?.lanes?.[stage.id]?.length ?? 0
       const minutesPerCandidate = getStageEffortMinutes(stage)
+      const isResumeStage = stage.analysis_type === 'resume' || stage.name?.toLowerCase().includes('curr')
+      const evaluations =
+        stageEvaluationCounts[stage.id] ??
+        (board?.lanes?.[stage.id] ?? []).reduce((sum, item) => {
+          const count = item.evaluation_count ?? (item.score != null ? 1 : 0)
+          return sum + count
+        }, 0)
+      const count = isResumeStage ? evaluations : 0
       const totalMinutes = count * minutesPerCandidate
       const totalHours = totalMinutes / 60
-      return { stageId: stage.id, stageName: stage.name, count, minutesPerCandidate, totalMinutes, totalHours }
+      return { stageId: stage.id, stageName: stage.name, count, minutesPerCandidate, totalMinutes, totalHours, isResumeStage }
     })
 
-    const totalHoursSaved = stageEffortSummary.reduce((sum, entry) => sum + entry.totalHours, 0)
-    const resumeEvaluations = stageList.reduce((sum, stage) => {
-      const isResumeStage = stage.analysis_type === 'resume' || stage.name?.toLowerCase().includes('curr')
-      if (!isResumeStage) return sum
-      return sum + (board?.lanes?.[stage.id]?.length ?? 0)
-    }, 0)
-    const costSaved = resumeEvaluations * (10 / 60) * HOURLY_COST_BRL
-    const roiPercent =
-      PLAN_MONTHLY_COST_BRL > 0 ? ((costSaved - PLAN_MONTHLY_COST_BRL) / PLAN_MONTHLY_COST_BRL) * 100 : null
+    const totalMinutesSaved = stageEffortSummary.reduce((sum, entry) => sum + entry.totalMinutes, 0)
+    const totalHoursSaved = totalMinutesSaved / 60
+    const resumeEvaluations = stageEffortSummary.reduce((sum, entry) => sum + (entry.isResumeStage ? entry.count : 0), 0)
+    const costSaved = resumeEvaluations * (ESTIMATED_MINUTES.resume / 60) * HOURLY_COST_BRL
 
     return {
       conversionRate,
-      finalStageCount: finalStageItems.length,
+      finalStageCount: approvedCount,
       timeOpenMs,
       slaMs,
       averageScore,
@@ -360,84 +378,13 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       adherenceLabel,
       stageScoreSummary,
       stageEffortSummary,
+      totalMinutesSaved,
       totalHoursSaved,
       resumeEvaluations,
       costSaved,
-      roiPercent,
     }
-  }, [orderedStages, board, totalCandidates, applications, jobInfo])
+  }, [orderedStages, board, totalCandidates, applications, jobInfo, stageEvaluationCounts])
 
-  useEffect(() => {
-    if (activeMainTab !== 'analytics') return
-    if (!board || stages.length === 0) return
-    const currentKey = ++requirementsLoadKey.current
-    setRequirementsSummary((prev) => ({ ...prev, loading: true }))
-
-    ;(async () => {
-      const requirementsMap = new Map<string, RequirementStat>()
-
-      for (const stage of orderedStages) {
-        const stageItems = board?.lanes?.[stage.id] ?? []
-        const applicationStageIds = stageItems
-          .map((item) => item.application_stage_id)
-          .filter((id): id is string => Boolean(id))
-        if (applicationStageIds.length === 0) continue
-
-        const requirementsRes = await api<{ items: { id: string; label: string }[] }>(
-          `/api/stages/${stage.id}/requirements`
-        ).catch(() => ({ items: [] }))
-        if (!requirementsRes.items.length) continue
-
-        requirementsRes.items.forEach((req) => {
-          requirementsMap.set(req.id, {
-            requirementId: req.id,
-            label: req.label,
-            stageId: stage.id,
-            stageName: stage.name,
-            matched: 0,
-            total: 0,
-            percent: 0,
-          })
-        })
-
-        const threshold = typeof stage.threshold === 'number' ? stage.threshold : 7
-        const scoreResponses = await Promise.all(
-          applicationStageIds.map((appStageId) =>
-            api<{ items: { requirement_id: string; value: number }[] }>(
-              `/api/stages/${stage.id}/scores?application_stage_id=${encodeURIComponent(appStageId)}`
-            ).catch(() => ({ items: [] }))
-          )
-        )
-
-        scoreResponses.forEach((res) => {
-          res.items.forEach((score) => {
-            const entry = requirementsMap.get(score.requirement_id)
-            if (!entry) return
-            entry.total += 1
-            if (Number(score.value) >= threshold) entry.matched += 1
-          })
-        })
-      }
-
-      const stats = Array.from(requirementsMap.values())
-        .map((entry) => ({
-          ...entry,
-          percent: entry.total > 0 ? (entry.matched / entry.total) * 100 : 0,
-        }))
-        .filter((entry) => entry.total > 0)
-
-      const most = [...stats].sort((a, b) => b.percent - a.percent).slice(0, 3)
-      const least = [...stats].sort((a, b) => a.percent - b.percent).slice(0, 3)
-
-      if (currentKey === requirementsLoadKey.current) {
-        setRequirementsSummary({ most, least, loading: false })
-      }
-    })().catch(() => {
-      if (currentKey === requirementsLoadKey.current) {
-        setRequirementsSummary({ most: [], least: [], loading: false })
-      }
-    })
-  }, [activeMainTab, board, stages, orderedStages])
 
   useEffect(() => {
     ;(async () => {
@@ -479,6 +426,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       try {
         const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${id}/board`)
         setBoard(b as any)
+        setStageEvaluationCounts((b as any).evaluation_counts_by_stage_id ?? {})
+        setLatestScoresByApplication((b as any).latest_scores_by_application_id ?? {})
       } catch {}
       try {
         const pts = await fetchPromptTemplates()
@@ -575,6 +524,46 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       notify({ title: 'Erro ao criar etapa', description: error?.message, variant: 'error' })
     } finally {
       setCreating(false)
+    }
+  }
+
+  function startEditStage(stage: Stage) {
+    setEditingStageId(stage.id)
+    setEditingStageForm({
+      name: stage.name || '',
+      description: stage.description || '',
+      threshold: stage.threshold ?? 0,
+      stage_weight: stage.stage_weight ?? 1,
+    })
+  }
+
+  async function handleUpdateStage(e: React.FormEvent) {
+    e.preventDefault()
+    if (!jobId || !editingStageId) return
+    if (!editingStageForm.name.trim()) {
+      notify({ title: 'Nome obrigatório', description: 'Informe um nome para a etapa.', variant: 'error' })
+      return
+    }
+    setUpdatingStage(true)
+    try {
+      await api(`/api/stages/${editingStageId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editingStageForm.name,
+          description: editingStageForm.description,
+          threshold: editingStageForm.threshold,
+          stage_weight: editingStageForm.stage_weight,
+        }),
+      })
+      const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`)
+      setStages(items)
+      notify({ title: 'Etapa atualizada', variant: 'success' })
+      setEditingStageId(null)
+    } catch (error: any) {
+      notify({ title: 'Erro ao atualizar etapa', description: error?.message, variant: 'error' })
+    } finally {
+      setUpdatingStage(false)
     }
   }
 
@@ -933,6 +922,17 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                   <p className="text-sm text-gray-600">Visualize o status de cada candidato e navegue para a etapa correspondente.</p>
                 </div>
                 <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <span>Ordenar:</span>
+                    <select
+                      value={candidatesSort}
+                      onChange={(e) => setCandidatesSort(e.target.value as 'name' | 'score')}
+                      className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-sm text-gray-700"
+                    >
+                      <option value="name">A-Z</option>
+                      <option value="score">Nota IA</option>
+                    </select>
+                  </div>
                   <span className="text-sm font-medium text-gray-500">Total: {totalCandidates}</span>
                   <button
                     type="button"
@@ -1082,7 +1082,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {candidateRows.map((row) => {
+                      {sortedCandidateRows.map((row) => {
                         const initials =
                           row.name && row.name.trim().length > 0
                             ? row.name
@@ -1108,7 +1108,13 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                                   {initials}
                         </div>
                         <div className="min-w-0">
-                                  <div className="font-medium text-gray-900 truncate">{row.name}</div>
+                                <Link
+                                  href={`/candidates?candidateId=${row.candidateId}`}
+                                  className="font-medium text-blue-700 hover:text-blue-800 hover:underline truncate"
+                                  title="Ver detalhes do candidato"
+                                >
+                                  {row.name}
+                                </Link>
                                   {row.email && <div className="text-xs text-gray-500 truncate">{row.email}</div>}
                         </div>
                       </div>
@@ -1262,16 +1268,13 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                     Estimativas baseadas em parâmetros internos configurados.
                   </p>
                   </div>
-                  <div className="text-xs text-gray-500">
-                    Plano mensal: {formatCurrencyBRL(PLAN_MONTHLY_COST_BRL)}
-                  </div>
                 </div>
 
-                <div className="mt-6 grid gap-4 md:grid-cols-3">
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
                   <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
                     <div className="text-sm text-emerald-700">Tempo total economizado</div>
                     <div className="mt-2 text-2xl font-semibold text-emerald-700">
-                      {analyticsData.totalHoursSaved.toFixed(1)}h
+                      {formatMinutesToHours(analyticsData.totalMinutesSaved)}
                     </div>
                   </div>
                   <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-4">
@@ -1280,18 +1283,12 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                       {formatCurrencyBRL(analyticsData.costSaved)}
                     </div>
                   </div>
-                  <div className="rounded-xl border border-amber-100 bg-amber-50/70 p-4">
-                    <div className="text-sm text-amber-700">ROI estimado</div>
-                    <div className="mt-2 text-2xl font-semibold text-amber-700">
-                      {analyticsData.roiPercent === null ? '—' : `${analyticsData.roiPercent.toFixed(0)}%`}
-                    </div>
-                  </div>
                 </div>
 
                 <div className="mt-6">
                   <div className="flex items-center justify-between">
                     <h4 className="text-sm font-semibold text-gray-900">Horas economizadas por etapa</h4>
-                    <div className="text-xs text-gray-500">Base por candidato</div>
+                    <div className="text-xs text-gray-500">Base por avaliação</div>
                   </div>
                   <div className="mt-4 space-y-3">
                     {analyticsData.stageEffortSummary.map((entry) => (
@@ -1300,11 +1297,11 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                           <div>
                             <div className="text-sm font-medium text-gray-900">{entry.stageName}</div>
                             <div className="text-xs text-gray-500">
-                              {entry.count} candidatos · {entry.minutesPerCandidate} min cada
+                              {entry.count} avaliações · {entry.minutesPerCandidate} min cada
                             </div>
                           </div>
                           <div className="text-sm font-semibold text-gray-900">
-                            {entry.totalHours.toFixed(1)}h
+                            {formatMinutesToHours(entry.totalMinutes)}
                           </div>
                         </div>
                       </div>
@@ -1336,46 +1333,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
               </div>
             </div>
 
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-                <h3 className="text-lg font-semibold text-gray-900">Requisitos menos atendidos</h3>
-                <p className="text-sm text-gray-600">Baseado nos scores de requisitos por candidato.</p>
-                <div className="mt-4 space-y-3">
-                  {requirementsSummary.loading && <div className="text-sm text-gray-500">Carregando...</div>}
-                  {!requirementsSummary.loading && requirementsSummary.least.length === 0 && (
-                    <div className="text-sm text-gray-500">Sem dados suficientes.</div>
-                  )}
-                  {requirementsSummary.least.map((req) => (
-                    <div key={req.requirementId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-                      <div className="text-sm font-medium text-gray-900">{req.label}</div>
-                      <div className="text-xs text-gray-500">
-                        {req.stageName} · {req.percent.toFixed(0)}% ({req.matched}/{req.total})
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-                <h3 className="text-lg font-semibold text-gray-900">Requisitos mais atendidos</h3>
-                <p className="text-sm text-gray-600">Baseado nos scores de requisitos por candidato.</p>
-                <div className="mt-4 space-y-3">
-                  {requirementsSummary.loading && <div className="text-sm text-gray-500">Carregando...</div>}
-                  {!requirementsSummary.loading && requirementsSummary.most.length === 0 && (
-                    <div className="text-sm text-gray-500">Sem dados suficientes.</div>
-                  )}
-                  {requirementsSummary.most.map((req) => (
-                    <div key={req.requirementId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-                      <div className="text-sm font-medium text-gray-900">{req.label}</div>
-                      <div className="text-xs text-gray-500">
-                        {req.stageName} · {req.percent.toFixed(0)}% ({req.matched}/{req.total})
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="text-lg font-semibold text-gray-900">Nota média por etapa</h3>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1395,7 +1352,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
             </div>
 
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Ranking de Candidatos</h3>
               <Panel jobId={jobId} />
             </div>
           </div>
@@ -1438,16 +1394,29 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                   <h2 className="text-lg font-semibold text-gray-900">Etapas do Processo</h2>
                   <p className="text-sm text-gray-600">Gerencie as etapas e acompanhe o pipeline de candidatos.</p>
                   </div>
-                      <button 
-                  type="button"
-                  onClick={() => setShowAddStageModal(true)}
-                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  Adicionar Etapa
-                      </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const stage = stages.find((s) => s.id === activeTab)
+                      if (stage) startEditStage(stage)
+                    }}
+                    disabled={!activeTab}
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    ✏️ Editar etapa
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setShowAddStageModal(true)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Adicionar Etapa
+                  </button>
+                </div>
               </div>
 
               {stages.length === 0 ? (
@@ -1491,11 +1460,29 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                                 )
                               })()}
                     </div>
-                            {stages.find((s) => s.id === activeTab)?.description && (
-                              <p className="text-xs text-gray-600 mt-2 whitespace-pre-wrap">
-                                {stages.find((s) => s.id === activeTab)?.description}
-                              </p>
-                  )}
+                            {(() => {
+                              const description = stages.find((s) => s.id === activeTab)?.description?.trim() || ''
+                              if (!description) return null
+                              const maxLength = 160
+                              const isLong = description.length > maxLength
+                              const text = showFullStageDescription || !isLong
+                                ? description
+                                : `${description.slice(0, maxLength).trim()}...`
+                              return (
+                                <div className="mt-2 space-y-1">
+                                  <p className="text-xs text-gray-600 whitespace-pre-wrap">{text}</p>
+                                  {isLong && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowFullStageDescription((prev) => !prev)}
+                                      className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                                    >
+                                      {showFullStageDescription ? 'Ver menos' : 'Ver mais'}
+                                    </button>
+                                  )}
+                                </div>
+                              )
+                            })()}
                           </div>
                 </div>
               </div>
@@ -1507,8 +1494,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                         loading={promptLoadingStage === activeTab}
                   onChange={handleStagePromptChange}
                 />
-
-                      <CandidatesFilters value={filters} onChange={setFilters} />
 
                       <div>
                         <CandidatesTable
@@ -1523,6 +1508,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                             const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
                             if (b) {
                               setBoard(b as any)
+                              setStageEvaluationCounts((b as any).evaluation_counts_by_stage_id ?? {})
+                              setLatestScoresByApplication((b as any).latest_scores_by_application_id ?? {})
                               setSelectedForBulk({})
                             }
                           }}
@@ -1544,61 +1531,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
               )}
           </div>
 
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900 mb-6">Análises de Candidatos</h2>
-        <div className="space-y-6">
-          {stages.map((s) => (
-            <div key={s.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-              <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
-                          <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 mt-1">
-                      <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
-                        Threshold: {s.threshold}
-                      </span>
-                      <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
-                        Peso: {s.stage_weight}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-6">
-                {(() => {
-                        const candidateName = stageSelectedCandidates[s.id]
-                          ? candidates.find((c) => c.id === stageSelectedCandidates[s.id])?.name || null
-                          : null
-                  const analysis = analysisByStage[s.id] || null
-                  const loading = Boolean(analysisLoading[s.id])
-                  
-                  console.log(`[DEBUG] Renderizando análise para etapa ${s.id}:`, {
-                    candidateName,
-                    analysis,
-                    loading,
-                          analysisResult: analysis?.result,
-                  })
-                  
-                  return (
-                    <StageAnalysisPanel
-                      candidateName={candidateName}
-                      analysis={analysis}
-                      loading={loading}
-                            expanded={true}
-                            onToggle={() => {}}
-                      onRefresh={() => {
-                        const candidateId = stageSelectedCandidates[s.id] ?? null
-                        if (candidateId) loadAnalysisForStage(s.id, candidateId)
-                      }}
-                    />
-                  )
-                })()}
-              </div>
-            </div>
-          ))}
-        </div>
-            </div>
           </div>
         )}
       </div>
@@ -1720,6 +1652,93 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                   className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {creating ? 'Criando...' : 'Criar Etapa'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para editar etapa */}
+      {editingStageId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">Editar etapa</h3>
+              <button
+                type="button"
+                onClick={() => setEditingStageId(null)}
+                className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateStage} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome da etapa</label>
+                <input
+                  value={editingStageForm.name}
+                  onChange={(e) => setEditingStageForm((prev) => ({ ...prev, name: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  placeholder="Ex: Triagem de currículo"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
+                <textarea
+                  value={editingStageForm.description}
+                  onChange={(e) => setEditingStageForm((prev) => ({ ...prev, description: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  rows={3}
+                  placeholder="Descreva o objetivo desta etapa"
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Threshold</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={editingStageForm.threshold}
+                    onChange={(e) =>
+                      setEditingStageForm((prev) => ({ ...prev, threshold: Number(e.target.value) }))
+                    }
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Peso</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={editingStageForm.stage_weight}
+                    onChange={(e) =>
+                      setEditingStageForm((prev) => ({ ...prev, stage_weight: Number(e.target.value) }))
+                    }
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingStageId(null)}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={updatingStage}
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {updatingStage ? 'Salvando...' : 'Salvar alterações'}
                 </button>
               </div>
             </form>

@@ -4,7 +4,7 @@ import Link from 'next/link'
 
 export default function SettingsPage() {
   return (
-    <div className="min-h-screen bg-gradient py-8">
+    <div className="min-h-screen bg-[hsl(var(--background))] py-8">
       <div className="container-page max-w-6xl mx-auto space-y-8">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Configurações</h1>

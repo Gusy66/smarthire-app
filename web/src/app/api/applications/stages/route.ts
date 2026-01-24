@@ -71,6 +71,24 @@ export async function PATCH(req: NextRequest) {
     return Response.json({ error: { code: 'db_error', message: updateError.message } }, { status: 500 })
   }
 
+  // Atualizar status final da aplicação quando aplicável
+  if (status === 'succeeded' || status === 'failed') {
+    await supabase
+      .from('applications')
+      .update({ status: status === 'succeeded' ? 'approved' : 'rejected' })
+      .eq('id', application_id)
+  }
+
+  // Registrar no audit_log
+  await logAuditAction(supabase, user, application_id, stage_id, status)
+  // Atualizar status final da aplicação quando aplicável
+  if (status === 'succeeded' || status === 'failed') {
+    await supabase
+      .from('applications')
+      .update({ status: status === 'succeeded' ? 'approved' : 'rejected' })
+      .eq('id', application_id)
+  }
+
   // Registrar no audit_log
   await logAuditAction(supabase, user, application_id, stage_id, status)
 
@@ -82,7 +100,7 @@ async function logAuditAction(supabase: any, user: any, applicationId: string, s
     // Buscar informações da aplicação e candidato
     const { data: app } = await supabase
       .from('applications')
-      .select('candidate_id, jobs(title)')
+      .select('candidate_id, job_id, jobs(title)')
       .eq('id', applicationId)
       .single()
 
@@ -104,6 +122,7 @@ async function logAuditAction(supabase: any, user: any, applicationId: string, s
           application_id: applicationId,
           stage_id: stageId,
           stage_name: stage?.name || 'N/A',
+          job_id: app.job_id || null,
           job_title: (app.jobs as any)?.title || 'N/A',
           new_status: status,
         },

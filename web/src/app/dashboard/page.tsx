@@ -215,8 +215,8 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Duas colunas: Vagas Recentes e Análise de Performance */}
-      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+      {/* Vagas Recentes */}
+      <div>
         {/* Vagas Recentes */}
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           <div className="border-b border-gray-100 px-4 sm:px-6 py-3 sm:py-4">
@@ -253,59 +253,6 @@ export default function DashboardPage() {
                 </Link>
               ))
             )}
-          </div>
-        </div>
-
-        {/* Análise de Performance */}
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-          <div className="border-b border-gray-100 px-4 sm:px-6 py-3 sm:py-4">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Análise de Performance</h2>
-            <p className="text-xs sm:text-sm text-gray-500">Métricas dos últimos 30 dias</p>
-          </div>
-          <div className="space-y-4 sm:space-y-5 p-4 sm:p-6">
-            {/* Tempo de Triagem */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                <span className="text-xs sm:text-sm text-gray-700">Tempo de Triagem</span>
-                <span className="text-xs sm:text-sm font-medium text-emerald-600">-65%</span>
-              </div>
-              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
-                <div className="h-1.5 sm:h-2 rounded-full bg-gray-800" style={{ width: '75%' }}></div>
-              </div>
-            </div>
-
-            {/* Qualidade das Contratações */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                <span className="text-xs sm:text-sm text-gray-700">Qualidade das Contratações</span>
-                <span className="text-xs sm:text-sm font-medium text-emerald-600">+42%</span>
-              </div>
-              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
-                <div className="h-1.5 sm:h-2 rounded-full bg-emerald-500" style={{ width: '85%' }}></div>
-              </div>
-            </div>
-
-            {/* Satisfação dos Candidatos */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                <span className="text-xs sm:text-sm text-gray-700">Satisfação dos Candidatos</span>
-                <span className="text-xs sm:text-sm font-medium text-gray-600">4.8/5</span>
-              </div>
-              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
-                <div className="h-1.5 sm:h-2 rounded-full bg-emerald-500" style={{ width: '96%' }}></div>
-              </div>
-            </div>
-
-            {/* ROI do Processo */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                <span className="text-xs sm:text-sm text-gray-700">ROI do Processo</span>
-                <span className="text-xs sm:text-sm font-medium text-emerald-600">+285%</span>
-              </div>
-              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
-                <div className="h-1.5 sm:h-2 rounded-full bg-gray-800" style={{ width: '100%' }}></div>
-              </div>
-            </div>
           </div>
         </div>
       </div>

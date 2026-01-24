@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import Link from 'next/link'
 import type { BoardLaneItem, Stage } from '../_lib/types'
 import CandidateDrawer from './CandidateDrawer'
 import { moveBulk } from '../_lib/api'
@@ -13,7 +14,6 @@ export default function CandidatesTable({
   setSelectedMap,
   onSelect,
   onMoved,
-  filters,
   stages,
   jobId,
   analysisType = 'resume',
@@ -24,7 +24,6 @@ export default function CandidatesTable({
   setSelectedMap: (next: Record<string, boolean>) => void
   onSelect?: (item: BoardLaneItem) => void
   onMoved?: () => void
-  filters?: { query?: string; status?: string; source?: string }
   stages?: Stage[]
   jobId?: string
   analysisType?: 'resume' | 'transcript'
@@ -34,6 +33,8 @@ export default function CandidatesTable({
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [moveDropdownId, setMoveDropdownId] = useState<string | null>(null)
   const [movingId, setMovingId] = useState<string | null>(null)
+  const [sortBy, setSortBy] = useState<'name' | 'score'>('name')
+  const [statusFilter, setStatusFilter] = useState<string>('')
 
   async function handleMoveCandidate(applicationStageId: string, toStageId: string) {
     if (!jobId) return
@@ -52,16 +53,25 @@ export default function CandidatesTable({
 
   const filtered = useMemo(() => {
     const base = items
-    const qCombined = (filters?.query ?? query).trim().toLowerCase()
+    const qCombined = query.trim().toLowerCase()
     let list = base
     if (qCombined) {
       list = list.filter((it) => (it.candidate.name || it.candidate.id).toLowerCase().includes(qCombined) || (it.candidate.email || '').toLowerCase().includes(qCombined))
     }
-    // placeholders para status/origem – integrar quando dados existirem
-    if (filters?.status) list = list.filter(() => true)
-    if (filters?.source) list = list.filter(() => true)
-    return list
-  }, [items, query, filters?.query, filters?.status, filters?.source])
+    // placeholder para status – integrar quando dados existirem
+    if (statusFilter) list = list.filter(() => true)
+    const sorted = [...list].sort((a, b) => {
+      if (sortBy === 'score') {
+        const aScore = typeof a.score === 'number' ? a.score : -Infinity
+        const bScore = typeof b.score === 'number' ? b.score : -Infinity
+        if (bScore !== aScore) return bScore - aScore
+      }
+      const aName = (a.candidate.name || a.candidate.id || '').toLowerCase()
+      const bName = (b.candidate.name || b.candidate.id || '').toLowerCase()
+      return aName.localeCompare(bName, 'pt-BR')
+    })
+    return sorted
+  }, [items, query, statusFilter, sortBy])
 
   const allChecked = filtered.length > 0 && filtered.every((it) => selectedMap[it.application_stage_id])
 
@@ -93,7 +103,32 @@ export default function CandidatesTable({
             {filtered.length} de {items.length}
           </span>
         </div>
-        <div className="flex items-center gap-2 text-xs text-gray-500">
+        <div className="flex items-center gap-3 text-xs text-gray-500">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Ordenar:</span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as 'name' | 'score')}
+              className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700"
+            >
+              <option value="name">A-Z</option>
+              <option value="score">Nota IA</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Status:</span>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700"
+            >
+              <option value="">Todos</option>
+              <option value="unseen">Não visualizado</option>
+              <option value="in_review">Em triagem</option>
+              <option value="approved">Aprovado</option>
+              <option value="rejected">Reprovado</option>
+            </select>
+          </div>
           <input
             type="checkbox"
             checked={allChecked}
@@ -132,9 +167,13 @@ export default function CandidatesTable({
                         {initials}
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-gray-900">
+                        <Link
+                          href={`/candidates?candidateId=${it.candidate.id}`}
+                          className="text-sm font-semibold text-blue-700 hover:text-blue-800 hover:underline"
+                          title="Ver detalhes do candidato"
+                        >
                           {it.candidate.name || it.candidate.id}
-                        </div>
+                        </Link>
                         {it.candidate.email && (
                           <div className="text-xs text-gray-500">{it.candidate.email}</div>
                         )}

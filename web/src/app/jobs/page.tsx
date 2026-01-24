@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ToastProvider'
@@ -21,11 +21,12 @@ type Overview = {
   }[]
 }
 
-type RankingItem = {
-  candidate: { id: string; name: string; email?: string }
-  job: { id: string; title: string }
-  currentStage: string
-  averageScore: number
+type JobsListItem = {
+  id: string
+  title: string
+  status: 'open' | 'paused' | 'closed'
+  created_at?: string
+  applications_count?: number
 }
 
 type JobDetail = {
@@ -254,10 +255,11 @@ export default function JobsPage() {
   const router = useRouter()
   const { notify } = useToast()
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [ranking, setRanking] = useState<RankingItem[]>([])
+  const [jobs, setJobs] = useState<JobsListItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [loadingRanking, setLoadingRanking] = useState(true)
+  const [loadingJobs, setLoadingJobs] = useState(true)
   const [editingJobId, setEditingJobId] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<'list' | 'cards'>('list')
 
   const loadOverview = useCallback(async (attempt = 0) => {
     try {
@@ -281,18 +283,26 @@ export default function JobsPage() {
     }
   }, [])
 
-  const loadRanking = useCallback(async () => {
-    setLoadingRanking(true)
+  const loadJobs = useCallback(async () => {
+    setLoadingJobs(true)
+    const pageSize = 100
+    let page = 1
+    let allItems: JobsListItem[] = []
     try {
-      const res = await fetch('/api/dashboard/ranking', { credentials: 'same-origin' })
-      if (res.ok) {
+      while (true) {
+        const res = await fetch(`/api/jobs?page=${page}&page_size=${pageSize}`, { credentials: 'same-origin' })
+        if (!res.ok) break
         const json = await res.json()
-        setRanking(json.items || [])
+        const items = Array.isArray(json?.items) ? json.items : []
+        allItems = allItems.concat(items)
+        if (items.length < pageSize) break
+        page += 1
       }
+      setJobs(allItems)
     } catch {
-      setRanking([])
+      setJobs([])
     } finally {
-      setLoadingRanking(false)
+      setLoadingJobs(false)
     }
   }, [])
 
@@ -301,7 +311,7 @@ export default function JobsPage() {
     
     async function init() {
       setLoading(true)
-      await Promise.all([loadOverview(), loadRanking()])
+      await Promise.all([loadOverview(), loadJobs()])
       if (mounted) {
         setLoading(false)
       }
@@ -310,7 +320,7 @@ export default function JobsPage() {
     init()
     
     return () => { mounted = false }
-  }, [loadOverview, loadRanking])
+  }, [loadOverview, loadJobs])
 
   async function handleDelete(id: string) {
     if (!confirm('Excluir esta vaga? Essa ação não pode ser desfeita.')) return
@@ -348,8 +358,8 @@ export default function JobsPage() {
         </Link>
       </div>
 
-      {/* 4 Cards de métricas */}
-      <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
+      {/* Cards de métricas */}
+      <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-3">
         {/* Vagas Ativas */}
         <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5 shadow-sm">
           <div className="flex items-center justify-between">
@@ -366,10 +376,26 @@ export default function JobsPage() {
           </div>
         </div>
 
+        {/* Total de Vagas */}
+        <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">Total de Vagas</span>
+            <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+          </div>
+          <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-bold text-gray-900">
+            {loading || loadingJobs ? '...' : jobs.length}
+          </div>
+          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-gray-500">
+            Todas as vagas cadastradas
+          </div>
+        </div>
+
         {/* Total de Candidatos */}
         <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">Candidatos</span>
+            <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">Total de Candidatos</span>
             <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
@@ -377,84 +403,120 @@ export default function JobsPage() {
           <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-bold text-gray-900">
             {loading ? '...' : overview?.total_candidates ?? 0}
           </div>
-          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-gray-500">
+          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-emerald-600">
             +{overview?.candidates_today ?? 0} hoje
-          </div>
-        </div>
-
-        {/* Tempo Médio */}
-        <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">Tempo Médio</span>
-            <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-bold text-gray-900">
-            {loading ? '...' : `${overview?.avg_time_days ?? 0}d`}
-          </div>
-          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-emerald-600">
-            Contratação
-          </div>
-        </div>
-
-        {/* Taxa de Sucesso */}
-        <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">Sucesso</span>
-            <svg className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <div className="mt-1.5 sm:mt-2 text-2xl sm:text-3xl font-bold text-gray-900">
-            {loading ? '...' : `${overview?.success_rate ?? 0}%`}
-          </div>
-          <div className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-emerald-600">
-            Preenchidas
           </div>
         </div>
       </div>
 
-      {/* Duas colunas: Vagas Recentes e Análise de Performance */}
-      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
-        {/* Vagas Recentes */}
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-          <div className="border-b border-gray-100 px-4 sm:px-6 py-3 sm:py-4">
+      {/* Vagas Recentes (todas as vagas) */}
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="border-b border-gray-100 px-4 sm:px-6 py-3 sm:py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
             <h2 className="text-base sm:text-lg font-semibold text-gray-900">Vagas Recentes</h2>
-            <p className="text-xs sm:text-sm text-gray-500">Suas vagas mais ativas</p>
+            <p className="text-xs sm:text-sm text-gray-500">Todas as vagas cadastradas</p>
           </div>
+          <div className="inline-flex items-center rounded-lg border border-gray-200 bg-gray-50 p-1 text-xs sm:text-sm">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`px-2.5 sm:px-3 py-1 rounded-md transition-colors ${
+                viewMode === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Lista
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('cards')}
+              className={`px-2.5 sm:px-3 py-1 rounded-md transition-colors ${
+                viewMode === 'cards' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Cards
+            </button>
+          </div>
+        </div>
+        {loading || loadingJobs ? (
+          <div className="px-4 sm:px-6 py-6 sm:py-8 text-center text-sm text-gray-500">Carregando...</div>
+        ) : jobs.length === 0 ? (
+          <div className="px-4 sm:px-6 py-6 sm:py-8 text-center text-sm text-gray-500">
+            Nenhuma vaga cadastrada ainda
+          </div>
+        ) : viewMode === 'list' ? (
           <div className="divide-y divide-gray-100">
-            {loading ? (
-              <div className="px-4 sm:px-6 py-6 sm:py-8 text-center text-sm text-gray-500">Carregando...</div>
-            ) : (overview?.recent_jobs?.length ?? 0) === 0 ? (
-              <div className="px-4 sm:px-6 py-6 sm:py-8 text-center text-sm text-gray-500">
-                Nenhuma vaga cadastrada ainda
-              </div>
-            ) : (
-              overview!.recent_jobs.map((job) => (
-                <div
-                  key={job.id}
-                  className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 transition-colors hover:bg-gray-50 gap-2 sm:gap-4"
-                >
-                  <Link href={`/jobs/${job.id}/stages`} className="flex-1 min-w-0">
-                    <div className="font-medium text-gray-900 text-sm sm:text-base truncate">{job.title}</div>
-                    <div className="text-xs sm:text-sm text-gray-500 truncate">
-                      {job.candidate_count} candidato{job.candidate_count !== 1 ? 's' : ''} • {formatRelative(job.created_at)}
-                    </div>
-                  </Link>
-                  <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
-                    <span className={`hidden sm:inline-flex items-center rounded-full px-2 sm:px-2.5 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium ${
-                      job.status === 'open' 
-                        ? 'bg-emerald-100 text-emerald-700' 
+            {jobs.map((job) => (
+              <div
+                key={job.id}
+                className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 transition-colors hover:bg-gray-50 gap-2 sm:gap-4"
+              >
+                <Link href={`/jobs/${job.id}/stages`} className="flex-1 min-w-0">
+                  <div className="font-medium text-gray-900 text-sm sm:text-base truncate">{job.title}</div>
+                  <div className="text-xs sm:text-sm text-gray-500 truncate">
+                    {job.applications_count ?? 0} candidato{(job.applications_count ?? 0) !== 1 ? 's' : ''} • {formatRelative(job.created_at)}
+                  </div>
+                </Link>
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+                  <span className={`hidden sm:inline-flex items-center rounded-full px-2 sm:px-2.5 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium ${
+                    job.status === 'open' 
+                      ? 'bg-emerald-100 text-emerald-700' 
+                      : job.status === 'closed'
+                        ? 'bg-gray-200 text-gray-700'
                         : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      {job.status === 'open' ? 'Ativa' : 'Em Análise'}
-                    </span>
+                  }`}>
+                    {job.status === 'open' ? 'Ativa' : job.status === 'closed' ? 'Encerrada' : 'Em Análise'}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setEditingJobId(job.id)
+                    }}
+                    className="text-gray-400 hover:text-gray-600 p-1"
+                    title="Editar"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDelete(job.id)
+                    }}
+                    className="text-gray-400 hover:text-red-600 p-1"
+                    title="Excluir"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-4 p-4 sm:p-6 sm:grid-cols-2 xl:grid-cols-3">
+            {jobs.map((job) => (
+              <div key={job.id} className="rounded-lg border border-gray-200 bg-white p-4 sm:p-5 shadow-sm flex flex-col gap-3">
+                <Link href={`/jobs/${job.id}/stages`} className="space-y-1 min-w-0">
+                  <div className="font-semibold text-gray-900 text-sm sm:text-base truncate">{job.title}</div>
+                  <div className="text-xs sm:text-sm text-gray-500 truncate">
+                    {job.applications_count ?? 0} candidato{(job.applications_count ?? 0) !== 1 ? 's' : ''} • {formatRelative(job.created_at)}
+                  </div>
+                </Link>
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] sm:text-xs font-medium ${
+                    job.status === 'open' 
+                      ? 'bg-emerald-100 text-emerald-700' 
+                      : job.status === 'closed'
+                        ? 'bg-gray-200 text-gray-700'
+                        : 'bg-amber-100 text-amber-700'
+                  }`}>
+                    {job.status === 'open' ? 'Ativa' : job.status === 'closed' ? 'Encerrada' : 'Em Análise'}
+                  </span>
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setEditingJobId(job.id)
-                      }}
+                      onClick={() => setEditingJobId(job.id)}
                       className="text-gray-400 hover:text-gray-600 p-1"
                       title="Editar"
                     >
@@ -463,10 +525,7 @@ export default function JobsPage() {
                       </svg>
                     </button>
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleDelete(job.id)
-                      }}
+                      onClick={() => handleDelete(job.id)}
                       className="text-gray-400 hover:text-red-600 p-1"
                       title="Excluir"
                     >
@@ -476,126 +535,10 @@ export default function JobsPage() {
                     </button>
                   </div>
                 </div>
-              ))
-            )}
+              </div>
+            ))}
           </div>
-        </div>
-
-        {/* Análise de Performance */}
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-          <div className="border-b border-gray-100 px-4 sm:px-6 py-3 sm:py-4">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Análise de Performance</h2>
-            <p className="text-xs sm:text-sm text-gray-500">Métricas dos últimos 30 dias</p>
-          </div>
-          <div className="space-y-4 sm:space-y-5 p-4 sm:p-6">
-            {/* Tempo de Triagem */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                <span className="text-xs sm:text-sm text-gray-700">Tempo de Triagem</span>
-                <span className="text-xs sm:text-sm font-medium text-emerald-600">-65%</span>
-              </div>
-              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
-                <div className="h-1.5 sm:h-2 rounded-full bg-gray-800" style={{ width: '75%' }}></div>
-              </div>
-            </div>
-
-            {/* Qualidade das Contratações */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                <span className="text-xs sm:text-sm text-gray-700">Qualidade das Contratações</span>
-                <span className="text-xs sm:text-sm font-medium text-emerald-600">+42%</span>
-              </div>
-              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
-                <div className="h-1.5 sm:h-2 rounded-full bg-emerald-500" style={{ width: '85%' }}></div>
-              </div>
-            </div>
-
-            {/* Satisfação dos Candidatos */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                <span className="text-xs sm:text-sm text-gray-700">Satisfação dos Candidatos</span>
-                <span className="text-xs sm:text-sm font-medium text-gray-600">4.8/5</span>
-              </div>
-              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
-                <div className="h-1.5 sm:h-2 rounded-full bg-emerald-500" style={{ width: '96%' }}></div>
-              </div>
-            </div>
-
-            {/* ROI do Processo */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                <span className="text-xs sm:text-sm text-gray-700">ROI do Processo</span>
-                <span className="text-xs sm:text-sm font-medium text-emerald-600">+285%</span>
-              </div>
-              <div className="h-1.5 sm:h-2 w-full rounded-full bg-gray-100">
-                <div className="h-1.5 sm:h-2 rounded-full bg-gray-800" style={{ width: '100%' }}></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Ranking de Candidatos */}
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-        <div className="border-b border-gray-100 px-4 sm:px-6 py-3 sm:py-4">
-          <h2 className="text-base sm:text-lg font-semibold text-gray-900">Ranking de Candidatos</h2>
-          <p className="text-xs sm:text-sm text-gray-500">Top candidatos ordenados por pontuação</p>
-        </div>
-        <div className="p-4 sm:p-6">
-          {loadingRanking ? (
-            <div className="text-center py-6 sm:py-8 text-sm text-gray-500">Carregando ranking...</div>
-          ) : ranking.length === 0 ? (
-            <div className="text-center py-6 sm:py-8 text-gray-500">
-              <p className="text-sm">Nenhum candidato com pontuação ainda.</p>
-              <p className="text-xs sm:text-sm mt-1">Analise candidatos com IA para ver o ranking aqui.</p>
-            </div>
-          ) : (
-            <div className="space-y-2 sm:space-y-3">
-              {ranking.map((item, index) => {
-                const position = index + 1
-                const scorePercent = Math.min((item.averageScore / 10) * 100, 100)
-                
-                const getBadgeStyle = (pos: number) => {
-                  if (pos === 1) return 'bg-yellow-400 text-yellow-900'
-                  if (pos === 2) return 'bg-gray-300 text-gray-800'
-                  if (pos === 3) return 'bg-orange-300 text-orange-900'
-                  return 'bg-gray-100 text-gray-600'
-                }
-                
-                return (
-                  <Link
-                    key={`${item.candidate.id}-${item.job.id}`}
-                    href={`/jobs/${item.job.id}/stages`}
-                    className="flex items-center gap-2 sm:gap-4 rounded-lg border border-gray-100 bg-white p-3 sm:p-4 transition hover:border-gray-300 hover:shadow-sm active:bg-gray-50"
-                  >
-                    <div className={`flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-full text-xs sm:text-sm font-bold flex-shrink-0 ${getBadgeStyle(position)}`}>
-                      {position}
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-900 text-sm sm:text-base truncate">{item.candidate.name}</div>
-                      <div className="text-xs sm:text-sm text-gray-500 truncate">
-                        {item.job.title} • {item.currentStage}
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-col items-end gap-0.5 sm:gap-1 w-14 sm:w-20 flex-shrink-0">
-                      <span className="text-lg sm:text-xl font-bold text-blue-600">
-                        {item.averageScore.toFixed(1)}
-                      </span>
-                      <div className="w-full h-1 sm:h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-blue-600 rounded-full"
-                          style={{ width: `${scorePercent}%` }}
-                        />
-                      </div>
-                    </div>
-                  </Link>
-                )
-              })}
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Ações Rápidas */}
