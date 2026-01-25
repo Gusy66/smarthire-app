@@ -44,6 +44,25 @@ export async function POST(req: NextRequest, { params }: Params) {
   console.log('[DEBUG API] Obtendo Supabase admin...')
   const supabase = getSupabaseAdmin()
 
+  // Se foi enviado currículo explicitamente mas sem URL assinada, gerar agora
+  if (resume_path && resume_bucket && !resume_signed_url) {
+    if (resume_path.startsWith(`${resume_bucket}/`)) {
+      resume_path = resume_path.substring(resume_bucket.length + 1)
+      console.log('[DEBUG API] Removido prefixo do bucket do path (explicit):', resume_path)
+    }
+
+    const { data: signedUrlData, error: signError } = await supabase.storage
+      .from(resume_bucket)
+      .createSignedUrl(resume_path, 60 * 60)
+
+    if (!signError && signedUrlData?.signedUrl) {
+      resume_signed_url = signedUrlData.signedUrl
+      console.log('[DEBUG API] URL assinada gerada com sucesso (explicit)')
+    } else {
+      console.log('[DEBUG API] Erro ao gerar URL assinada (explicit):', signError)
+    }
+  }
+
   // Se não foi enviado currículo explicitamente, buscar do candidato (exceto etapa de transcrição)
   const { data: stageInfo } = await supabase
     .from('job_stages')

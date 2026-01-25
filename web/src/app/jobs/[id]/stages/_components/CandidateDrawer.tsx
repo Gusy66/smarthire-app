@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getLatestAnalysis, evaluate } from '../_lib/api'
 import type { LatestAnalysis } from '../_lib/types'
 import { useToast } from '@/components/ToastProvider'
@@ -29,6 +29,7 @@ export default function CandidateDrawer({
   const [candidateData, setCandidateData] = useState<any>(null)
   const [transcriptFile, setTranscriptFile] = useState<File | null>(null)
   const [uploadingTranscript, setUploadingTranscript] = useState(false)
+  const pollingRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -78,10 +79,6 @@ export default function CandidateDrawer({
         candidate_id: candidate.id,
       })
       notify({ title: 'Análise iniciada', description: 'A IA está processando o currículo.', variant: 'success' })
-      setTimeout(async () => {
-        const latest = await getLatestAnalysis(stageId, { applicationStageId })
-        setAnalysis(latest)
-      }, 2000)
     } catch (e: any) {
       notify({ title: 'Falha na análise', description: e?.message, variant: 'error' })
     } finally {
@@ -131,11 +128,6 @@ export default function CandidateDrawer({
       
       notify({ title: 'Análise iniciada', description: 'A IA está processando a transcrição.', variant: 'success' })
       setTranscriptFile(null)
-      
-      setTimeout(async () => {
-        const latest = await getLatestAnalysis(stageId, { applicationStageId })
-        setAnalysis(latest)
-      }, 2000)
     } catch (e: any) {
       notify({ title: 'Falha na análise', description: e?.message, variant: 'error' })
     } finally {
@@ -152,25 +144,42 @@ export default function CandidateDrawer({
   const isAnalysisRunning = analysisStatus === 'running'
   const hasResult = Boolean(analysis?.result && analysisStatus === 'succeeded')
 
-  useEffect(() => {
-    if (!open) return
-    if (analysisStatus !== 'running') return
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      window.clearTimeout(pollingRef.current)
+      pollingRef.current = null
+    }
+  }, [])
 
-    const timeout = window.setTimeout(async () => {
+  useEffect(() => {
+    if (!open || analysisStatus !== 'running') {
+      stopPolling()
+      return
+    }
+
+    const poll = async () => {
       try {
         const latest = await getLatestAnalysis(stageId, { applicationStageId })
         if (latest) {
           setAnalysis(latest)
+          if (latest.status === 'running') {
+            pollingRef.current = window.setTimeout(poll, 4000)
+          } else {
+            stopPolling()
+          }
         } else {
           setAnalysis(null)
+          stopPolling()
         }
       } catch (error) {
         console.error('Erro ao atualizar análise em processamento:', error)
+        pollingRef.current = window.setTimeout(poll, 4000)
       }
-    }, 4000)
+    }
 
-    return () => window.clearTimeout(timeout)
-  }, [open, analysisStatus, stageId, applicationStageId])
+    poll()
+    return () => stopPolling()
+  }, [open, analysisStatus, stageId, applicationStageId, stopPolling])
 
   if (!open) return null
 

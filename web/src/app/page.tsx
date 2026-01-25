@@ -1,6 +1,20 @@
+'use client'
+
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 
 export default function Home() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then((res) => {
+        if (res.ok) setIsAuthenticated(true)
+        else setIsAuthenticated(false)
+      })
+      .catch(() => setIsAuthenticated(false))
+  }, [])
+
   return (
     <div className="min-h-screen bg-white">
       <header className="border-b border-gray-100 bg-white/70 backdrop-blur">
@@ -11,17 +25,25 @@ export default function Home() {
             </div>
             <span className="text-lg font-semibold text-gray-900">SmartHire</span>
           </div>
-          <nav className="hidden lg:flex items-center gap-8 text-sm text-gray-600">
-            <a href="#solucao" className="hover:text-gray-900 transition-colors">Solução</a>
-            <a href="#beneficios" className="hover:text-gray-900 transition-colors">Benefícios</a>
-            <a href="#depoimentos" className="hover:text-gray-900 transition-colors">Depoimentos</a>
-            <a href="#contato" className="hover:text-gray-900 transition-colors">Contato</a>
-          </nav>
           <div className="flex items-center gap-3">
-            <Link href="/dashboard" className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
-              Login
+            {!isAuthenticated && (
+              <Link
+                href="/dashboard"
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Login
+              </Link>
+            )}
+            <Link
+              href="/dashboard"
+              className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Painel
             </Link>
-            <Link href="/settings/ai" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors">
+            <Link
+              href="/settings/ai"
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
+            >
               Fale Conosco
             </Link>
           </div>
