@@ -7,11 +7,15 @@ export async function GET(req: NextRequest) {
     const supabase = getSupabaseAdmin()
     const user = await requireUser()
 
-    // Buscar configurações do usuário
+    if (!user.company_id) {
+      return Response.json({ error: { code: 'missing_company', message: 'Usuário sem empresa vinculada' } }, { status: 400 })
+    }
+
+    // Buscar configurações da empresa
     const { data, error } = await supabase
       .from('ai_settings')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('company_id', user.company_id)
       .single()
 
     if (error && error.code !== 'PGRST116') {
@@ -23,10 +27,19 @@ export async function GET(req: NextRequest) {
       openai_api_key: '',
       model: 'gpt-4o-mini',
       temperature: 0.3,
-      max_tokens: 2000
+      max_tokens: 2000,
+      company_id: user.company_id,
     }
 
-    return Response.json(data || defaultConfig)
+    // Decodificar chave antes de enviar ao front (armazenada em base64)
+    const openai_api_key =
+      data?.openai_api_key ? Buffer.from(data.openai_api_key, 'base64').toString('utf-8') : ''
+
+    return Response.json(
+      data
+        ? { ...data, openai_api_key }
+        : { ...defaultConfig, openai_api_key: '' }
+    )
   } catch (error) {
     console.error('Erro ao buscar configurações da IA:', error)
     return Response.json({ error: { code: 'internal_error', message: 'Erro interno do servidor' } }, { status: 500 })
@@ -37,6 +50,10 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = getSupabaseAdmin()
     const user = await requireUser()
+
+    if (!user.company_id) {
+      return Response.json({ error: { code: 'missing_company', message: 'Usuário sem empresa vinculada' } }, { status: 400 })
+    }
 
     const body = await req.json()
     const { openai_api_key, model, temperature, max_tokens } = body
@@ -58,17 +75,18 @@ export async function POST(req: NextRequest) {
     const encryptedApiKey = Buffer.from(openai_api_key).toString('base64')
 
     const upsertPayload = {
-      user_id: user.id,
+      user_id: user.id, // mantém quem salvou
+      company_id: user.company_id,
       openai_api_key: encryptedApiKey,
       model,
       temperature,
       max_tokens,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     }
 
     const { error } = await supabase
       .from('ai_settings')
-      .upsert(upsertPayload, { onConflict: 'user_id' })
+      .upsert(upsertPayload, { onConflict: 'company_id' })
 
     if (error) {
       return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })

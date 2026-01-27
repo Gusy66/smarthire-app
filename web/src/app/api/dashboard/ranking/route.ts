@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     .from('jobs')
     .select('id, title')
     .eq('company_id', user.company_id)
-    .eq('created_by', user.id)
+    .eq('company_id', user.company_id)
 
   if (jobsError) {
     return Response.json({ error: { code: 'db_error', message: jobsError.message } }, { status: 500 })

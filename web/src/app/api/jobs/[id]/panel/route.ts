@@ -47,9 +47,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     }
   }
 
-  if (job.created_by !== user.id) {
-    return Response.json({ error: { code: 'forbidden', message: 'Acesso não autorizado' } }, { status: 403 })
-  }
+  // Permitir todos da mesma empresa acessarem o painel da vaga
 
   const { data: stages, error: stagesError } = await supabase
     .from('job_stages')

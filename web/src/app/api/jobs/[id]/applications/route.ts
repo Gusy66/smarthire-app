@@ -24,7 +24,8 @@ export async function GET(_: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'not_found', message: 'Vaga não encontrada' } }, { status: 404 })
   }
 
-  if (job.company_id !== user.company_id || job.created_by !== user.id) {
+  // Permitir todos da mesma empresa (independe de quem criou a vaga)
+  if (job.company_id !== user.company_id) {
     return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga solicitada' } }, { status: 403 })
   }
 
@@ -46,12 +47,10 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const candidateById = new Map(
     (candidates ?? [])
-      .filter((c) => c.created_by === user.id && c.company_id === user.company_id)
+      .filter((c) => c.company_id === user.company_id)
       .map((c) => [c.id, c])
   )
-  const items = apps
-    .filter((a) => candidateById.has(a.candidate_id))
-    .map((a) => ({ ...a, candidate: candidateById.get(a.candidate_id) || null }))
+  const items = apps.map((a) => ({ ...a, candidate: candidateById.get(a.candidate_id) || null }))
   return Response.json({ items })
 }
 
@@ -80,7 +79,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'not_found', message: 'Vaga não encontrada' } }, { status: 404 })
   }
 
-  if (job.company_id !== user.company_id || job.created_by !== user.id) {
+  if (job.company_id !== user.company_id) {
     return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga solicitada' } }, { status: 403 })
   }
 

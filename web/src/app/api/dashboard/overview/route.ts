@@ -11,7 +11,6 @@ export async function GET() {
       .from('jobs')
       .select('id', { count: 'exact', head: true })
       .eq('company_id', user.company_id)
-      .eq('created_by', user.id)
       .eq('status', 'open')
 
     // Total de candidatos
@@ -19,7 +18,6 @@ export async function GET() {
       .from('candidates')
       .select('id', { count: 'exact', head: true })
       .eq('company_id', user.company_id)
-      .eq('created_by', user.id)
 
     // Vagas criadas esta semana
     const oneWeekAgo = new Date()
@@ -28,7 +26,6 @@ export async function GET() {
       .from('jobs')
       .select('id', { count: 'exact', head: true })
       .eq('company_id', user.company_id)
-      .eq('created_by', user.id)
       .gte('created_at', oneWeekAgo.toISOString())
 
     // Candidatos cadastrados hoje
@@ -38,7 +35,6 @@ export async function GET() {
       .from('candidates')
       .select('id', { count: 'exact', head: true })
       .eq('company_id', user.company_id)
-      .eq('created_by', user.id)
       .gte('created_at', today.toISOString())
 
     // Buscar vagas fechadas para calcular tempo médio e taxa de sucesso
@@ -46,7 +42,6 @@ export async function GET() {
       .from('jobs')
       .select('id, created_at, updated_at, status')
       .eq('company_id', user.company_id)
-      .eq('created_by', user.id)
       .eq('status', 'closed')
 
     // Todas as vagas para calcular taxa de sucesso
@@ -54,7 +49,6 @@ export async function GET() {
       .from('jobs')
       .select('id', { count: 'exact', head: true })
       .eq('company_id', user.company_id)
-      .eq('created_by', user.id)
 
     // Calcular tempo médio de preenchimento (dias entre criação e fechamento)
     let avgTimeDays = 0
@@ -78,7 +72,6 @@ export async function GET() {
       .from('jobs')
       .select('id, title, status, created_at')
       .eq('company_id', user.company_id)
-      .eq('created_by', user.id)
       .order('created_at', { ascending: false })
       .limit(5)
 

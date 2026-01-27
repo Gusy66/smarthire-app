@@ -108,6 +108,29 @@ export async function POST(req: NextRequest, { params }: Params) {
       console.log('[DEBUG API] Candidato não tem currículo anexado ou erro:', appError)
     }
   }
+
+  // Gerar signed URL para transcrição se veio só path/bucket
+  let transcriptPath = transcript_path
+  let transcriptBucket = transcript_bucket
+  let transcriptSignedUrl = transcript_signed_url
+
+  if (transcriptPath && transcriptBucket && !transcriptSignedUrl) {
+    if (transcriptPath.startsWith(`${transcriptBucket}/`)) {
+      transcriptPath = transcriptPath.substring(transcriptBucket.length + 1)
+      console.log('[DEBUG API] Removido prefixo do bucket do path (transcript):', transcriptPath)
+    }
+
+    const { data: signedUrlData, error: signError } = await supabase.storage
+      .from(transcriptBucket)
+      .createSignedUrl(transcriptPath, 60 * 60)
+
+    if (!signError && signedUrlData?.signedUrl) {
+      transcriptSignedUrl = signedUrlData.signedUrl
+      console.log('[DEBUG API] URL assinada gerada com sucesso (transcript)')
+    } else {
+      console.log('[DEBUG API] Erro ao gerar URL assinada (transcript):', signError)
+    }
+  }
   
   console.log('[DEBUG API] Verificando usuário...')
   const user = await requireUser()
@@ -156,6 +179,18 @@ export async function POST(req: NextRequest, { params }: Params) {
     promptTemplateContent = defaultTemplate?.content ?? null
   }
 
+  // Reforçar que a IA deve listar explicitamente quais pré-requisitos são atendidos ou não
+  const extraInstructions =
+    '\n\nInstruções adicionais (NÃO omitir):\n' +
+    '- Liste em bullets quais pré-requisitos foram ATENDIDOS, citando o nome/trecho do requisito e a evidência encontrada.\n' +
+    '- Liste em bullets quais pré-requisitos NÃO foram atendidos, citando o nome/trecho do requisito e o que faltou.\n' +
+    '- Evite frases vagas como "atende parcialmente"; seja específico e conciso.'
+  if (promptTemplateContent) {
+    promptTemplateContent = `${promptTemplateContent.trim()}${extraInstructions}`
+  } else {
+    promptTemplateContent = extraInstructions.trim()
+  }
+
   // Buscar documentos de etapa se document_path não foi fornecido diretamente
   let finalDocumentPath = document_path
   let finalDocumentBucket = document_bucket
@@ -198,9 +233,9 @@ export async function POST(req: NextRequest, { params }: Params) {
     audio_path,
     audio_bucket,
     audio_signed_url,
-    transcript_path,
-    transcript_bucket,
-    transcript_signed_url,
+    transcript_path: transcriptPath,
+    transcript_bucket: transcriptBucket,
+    transcript_signed_url: transcriptSignedUrl,
     // Novos campos para documentos de etapa
     document_path: finalDocumentPath,
     document_bucket: finalDocumentBucket,

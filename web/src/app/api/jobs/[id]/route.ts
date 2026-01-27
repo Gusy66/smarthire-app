@@ -103,7 +103,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'not_found', message: 'Vaga não encontrada' } }, { status: 404 })
   }
 
-  if (job.company_id !== user.company_id || job.created_by !== user.id) {
+  if (job.company_id !== user.company_id) {
     return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga' } }, { status: 403 })
   }
 
@@ -144,7 +144,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'not_found', message: 'Vaga não encontrada' } }, { status: 404 })
   }
 
-  if (job.company_id !== user.company_id || job.created_by !== user.id) {
+  if (job.company_id !== user.company_id) {
     return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga' } }, { status: 403 })
   }
 

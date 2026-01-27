@@ -64,7 +64,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     return Response.json({ error: { code: 'forbidden', message: 'Vaga não encontrada' } }, { status: 404 })
   }
 
-  if (jobRow.company_id !== user.company_id || jobRow.created_by !== user.id) {
+  if (jobRow.company_id !== user.company_id) {
     return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga' } }, { status: 403 })
   }
 

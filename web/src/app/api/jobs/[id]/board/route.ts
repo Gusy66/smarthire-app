@@ -21,7 +21,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     .maybeSingle()
 
   if (jobError || !job) return Response.json({ error: { code: 'not_found', message: 'Vaga não encontrada' } }, { status: 404 })
-  if (job.company_id !== user.company_id || job.created_by !== user.id) return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga' } }, { status: 403 })
+  if (job.company_id !== user.company_id) return Response.json({ error: { code: 'forbidden', message: 'Sem acesso à vaga' } }, { status: 403 })
 
   const { data: stages, error: stagesError } = await supabase
     .from('job_stages')

@@ -101,12 +101,16 @@ export default function CandidateDrawer({
         transcriptFile.name.endsWith('.doc') ? 'application/msword' :
         transcriptFile.name.endsWith('.json') ? 'application/json' : 'application/pdf')
       
-      const uploadRes = await fetch('/api/uploads/resume', {
+      const uploadRes = await fetch('/api/uploads/transcript', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: transcriptFile.name, content_type: contentType, for_stage: true }),
+        body: JSON.stringify({ filename: transcriptFile.name, content_type: contentType }),
       })
       const uploadJson = await uploadRes.json()
+
+      if (!uploadRes.ok || !uploadJson?.upload_url) {
+        throw new Error(uploadJson?.error?.message || 'Falha ao criar URL de upload')
+      }
       
       // Upload para URL assinada
       await fetch(uploadJson.upload_url, {

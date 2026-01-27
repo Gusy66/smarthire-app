@@ -31,8 +31,8 @@ export async function GET(req: NextRequest) {
   query = query.order('created_at', { ascending: false }).range(from, to)
   const { data, error, count } = await query
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
-  const filteredCandidates = (data ?? []).filter((c) => (c.created_by ?? user.id) === user.id)
-  const candidates = filteredCandidates.map((c) => ({
+  // Compartilhar candidatos entre todos os usuários da mesma empresa
+  const candidates = (data ?? []).map((c) => ({
     ...c,
     resume_path: normalizeStoragePath(c.resume_path, c.resume_bucket),
   }))

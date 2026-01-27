@@ -27,7 +27,7 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 
   const job = application.jobs as any
-  if (job.company_id !== user.company_id || job.created_by !== user.id) {
+  if (job.company_id !== user.company_id) {
     return Response.json({ error: { code: 'forbidden', message: 'Sem acesso a esta aplicação' } }, { status: 403 })
   }
 
