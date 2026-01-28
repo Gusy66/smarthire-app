@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import type { BoardLaneItem, Stage } from '../_lib/types'
 import CandidateDrawer from './CandidateDrawer'
-import { moveBulk } from '../_lib/api'
+import { moveBulk, evaluate } from '../_lib/api'
 import { useToast } from '@/components/ToastProvider'
 
 export default function CandidatesTable({
@@ -17,6 +17,7 @@ export default function CandidatesTable({
   stages,
   jobId,
   analysisType = 'resume',
+  onRefresh,
 }: {
   stage: Stage
   items: BoardLaneItem[]
@@ -27,6 +28,7 @@ export default function CandidatesTable({
   stages?: Stage[]
   jobId?: string
   analysisType?: 'resume' | 'transcript'
+  onRefresh?: () => void
 }) {
   const { notify } = useToast()
   const [query, setQuery] = useState('')
@@ -35,6 +37,7 @@ export default function CandidatesTable({
   const [movingId, setMovingId] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<'name' | 'score'>('name')
   const [statusFilter, setStatusFilter] = useState<string>('')
+  const [bulkAnalyzing, setBulkAnalyzing] = useState(false)
 
   async function handleMoveCandidate(applicationStageId: string, toStageId: string) {
     if (!jobId) return
@@ -89,6 +92,61 @@ export default function CandidatesTable({
     })
   }
 
+  async function handleAnalyzeSelected() {
+    const selectedIds = Object.entries(selectedMap)
+      .filter(([, v]) => v)
+      .map(([id]) => id)
+    if (!selectedIds.length) {
+      notify({ title: 'Selecione candidatos', description: 'Marque pelo menos um candidato.', variant: 'warning' })
+      return
+    }
+    setBulkAnalyzing(true)
+    try {
+      const tasks = filtered
+        .filter((it) => selectedIds.includes(it.application_stage_id))
+        .map((it) =>
+          evaluate(stage.id, {
+            application_id: it.application_id,
+            application_stage_id: it.application_stage_id,
+            candidate_id: it.candidate.id,
+          }).catch((err) => {
+            console.error('Falha ao avaliar', err)
+            return null
+          })
+        )
+      await Promise.all(tasks)
+      notify({ title: 'Análise iniciada', description: 'IA processando candidatos selecionados.', variant: 'success' })
+      onRefresh?.()
+    } catch (e: any) {
+      notify({ title: 'Falha ao iniciar análise', description: e?.message, variant: 'error' })
+    } finally {
+      setBulkAnalyzing(false)
+    }
+  }
+
+  function renderProgress(it: BoardLaneItem) {
+    if (!it.run_status) return null
+    const isRunning = it.run_status === 'running'
+    const isFailed = it.run_status === 'failed'
+    const percent = isRunning ? 60 : it.run_status === 'succeeded' ? 100 : isFailed ? 100 : 0
+    const color = isFailed ? 'bg-red-500' : isRunning ? 'bg-amber-500' : 'bg-emerald-600'
+    const label = isRunning ? 'Analisando...' : isFailed ? 'Falhou' : 'Concluído'
+    return (
+      <div className="mt-2 w-full max-w-xs">
+        <div className="flex items-center justify-between text-xs text-gray-600">
+          <span>{label}</span>
+          <span>{percent}%</span>
+        </div>
+        <div className="mt-1 h-2 w-full rounded-full bg-gray-100">
+          <div
+            className={`h-2 rounded-full ${color} transition-all`}
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="card p-0">
       <div className="px-6 py-4 border-b flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -104,6 +162,14 @@ export default function CandidatesTable({
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-gray-500">
+          <button
+            type="button"
+            onClick={handleAnalyzeSelected}
+            disabled={bulkAnalyzing}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {bulkAnalyzing ? 'Analisando...' : 'Analisar selecionados'}
+          </button>
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">Ordenar:</span>
             <select
@@ -190,6 +256,7 @@ export default function CandidatesTable({
                               Sem nota
                             </span>
                           )}
+                        {renderProgress(it)}
                         </div>
                       </div>
                       </div>

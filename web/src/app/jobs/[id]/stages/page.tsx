@@ -193,6 +193,15 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const pollingTimeouts = useRef<Record<string, number>>({})
   const [stageEvaluationCounts, setStageEvaluationCounts] = useState<Record<string, number>>({})
   const [latestScoresByApplication, setLatestScoresByApplication] = useState<Record<string, number>>({})
+  const refreshBoard = useCallback(async () => {
+    if (!jobId) return
+    const b = await api<{ lanes: any; stages: Stage[]; evaluation_counts_by_stage_id?: Record<string, number>; latest_scores_by_application_id?: Record<string, number> }>(`/api/jobs/${jobId}/board`).catch(() => null)
+    if (b) {
+      setBoard(b as any)
+      setStageEvaluationCounts((b as any).evaluation_counts_by_stage_id ?? {})
+      setLatestScoresByApplication((b as any).latest_scores_by_application_id ?? {})
+    }
+  }, [jobId])
   
   // Estado para atribuição de candidatos
   const [candidateSearchQuery, setCandidateSearchQuery] = useState('')
@@ -323,28 +332,60 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
           }, 0) / approvedApps.length
         : null
 
-    const allScores = Object.values(board?.lanes ?? {}).flatMap((items) =>
-      items.map((item) => item.score).filter((score): score is number => typeof score === 'number')
-    )
-    const hasScores = allScores.length > 0
-    const averageScore = hasScores ? allScores.reduce((sum, score) => sum + score, 0) / allScores.length : 0
-
-    const topCount = hasScores ? Math.max(1, Math.ceil(allScores.length * 0.2)) : 0
-    const topScores = [...allScores].sort((a, b) => b - a).slice(0, topCount)
-    const hasAdherence = topScores.length > 0
-    const adherenceScore = hasAdherence ? topScores.reduce((sum, score) => sum + score, 0) / topScores.length : 0
-
-    const adherenceLabel =
-      adherenceScore < 6.9 ? 'Precisa melhorar' : adherenceScore < 8 ? 'Médio' : 'Top'
-
+    // --- Índice de aderência por etapa (top 20% de cada etapa)
     const stageScoreSummary = stageList.map((stage) => {
       const stageScores = (board?.lanes?.[stage.id] ?? [])
         .map((item) => item.score)
         .filter((score): score is number => typeof score === 'number')
       const avg =
         stageScores.length > 0 ? stageScores.reduce((sum, score) => sum + score, 0) / stageScores.length : null
-      return { stageId: stage.id, stageName: stage.name, averageScore: avg }
+      const topCount = stageScores.length ? Math.max(1, Math.ceil(stageScores.length * 0.2)) : 0
+      const topScores = [...stageScores].sort((a, b) => b - a).slice(0, topCount)
+      const adherenceTop20 = topScores.length ? topScores.reduce((s, v) => s + v, 0) / topScores.length : null
+      return { stageId: stage.id, stageName: stage.name, averageScore: avg, adherenceScore: adherenceTop20 }
     })
+
+    // --- Índice de aderência total da vaga (top 20% do ranking ponderado por stage_weight)
+    const stageWeightTotal = stageList.reduce((sum, stage) => sum + (stage.stage_weight || 0), 0) || 1
+    const scoresByApplication = new Map<
+      string,
+      { sumWeighted: number; totalWeight: number }
+    >()
+
+    stageList.forEach((stage) => {
+      const items = board?.lanes?.[stage.id] ?? []
+      items.forEach((item: any) => {
+        if (typeof item.score === 'number') {
+          const entry = scoresByApplication.get(item.application_id) || { sumWeighted: 0, totalWeight: stageWeightTotal }
+          entry.sumWeighted += item.score * stage.stage_weight
+          // totalWeight já leva o total de etapas (incluindo sem nota) para ponderar como o ranking
+          scoresByApplication.set(item.application_id, entry)
+        } else {
+          // mesmo sem score, garante totalWeight preenchido
+          if (!scoresByApplication.has(item.application_id)) {
+            scoresByApplication.set(item.application_id, { sumWeighted: 0, totalWeight: stageWeightTotal })
+          }
+        }
+      })
+    })
+
+    const applicationAvgScores = Array.from(scoresByApplication.values()).map((entry) =>
+      entry.totalWeight > 0 ? entry.sumWeighted / entry.totalWeight : 0
+    )
+
+    const hasScores = applicationAvgScores.length > 0
+    const topCountTotal = hasScores ? Math.max(1, Math.ceil(applicationAvgScores.length * 0.2)) : 0
+    const topScoresTotal = [...applicationAvgScores].sort((a, b) => b - a).slice(0, topCountTotal)
+    const adherenceScore = topScoresTotal.length
+      ? topScoresTotal.reduce((sum, score) => sum + score, 0) / topScoresTotal.length
+      : 0
+    const hasAdherence = topScoresTotal.length > 0
+    const averageScore = hasScores
+      ? applicationAvgScores.reduce((sum, score) => sum + score, 0) / applicationAvgScores.length
+      : 0
+
+    const adherenceLabel =
+      adherenceScore < 6.9 ? 'Precisa melhorar' : adherenceScore < 8 ? 'Médio' : 'Top'
 
     const stageEffortSummary = stageList.map((stage) => {
       const minutesPerCandidate = getStageEffortMinutes(stage)
@@ -385,6 +426,20 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     }
   }, [orderedStages, board, totalCandidates, applications, jobInfo, stageEvaluationCounts])
 
+  // Poll board when there is any analysis running
+  useEffect(() => {
+    const hasRunning =
+      board &&
+      Object.values(board.lanes || {}).some((items: any) =>
+        (items as any[]).some((it) => it.run_status === 'running')
+      )
+    if (!hasRunning) return
+    const id = window.setInterval(() => {
+      refreshBoard()
+    }, 4000)
+    return () => window.clearInterval(id)
+  }, [board, refreshBoard])
+
 
   useEffect(() => {
     ;(async () => {
@@ -424,7 +479,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       setApplications(apps.items || [])
       // carregar board inicial
       try {
-        const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${id}/board`)
+        const b = await api<{ lanes: any; stages: Stage[]; evaluation_counts_by_stage_id?: Record<string, number>; latest_scores_by_application_id?: Record<string, number> }>(`/api/jobs/${id}/board`)
         setBoard(b as any)
         setStageEvaluationCounts((b as any).evaluation_counts_by_stage_id ?? {})
         setLatestScoresByApplication((b as any).latest_scores_by_application_id ?? {})
@@ -1316,7 +1371,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
               <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
                 <h3 className="text-lg font-semibold text-gray-900">Índice de aderência</h3>
                 <p className="text-sm text-gray-600">
-                  Média do top 20% melhores candidatos (score final).
+                  Média do top 20% melhores candidatos (score ponderado no ranking).
                 </p>
                 <div className="mt-6 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-5">
                   <div className="text-sm text-emerald-700">Aderência da vaga</div>
@@ -1334,14 +1389,14 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
             </div>
 
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-semibold text-gray-900">Nota média por etapa</h3>
+              <h3 className="text-lg font-semibold text-gray-900">Índice por etapa (top 20%)</h3>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
                 {analyticsData.stageScoreSummary.map((stage) => (
                   <div key={stage.stageId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
                     <div className="text-sm font-medium text-gray-900">{stage.stageName}</div>
-                    <div className="text-xs text-gray-500">Média de score IA</div>
+                    <div className="text-xs text-gray-500">Média dos top 20% da etapa</div>
                     <div className="mt-2 text-lg font-semibold text-gray-900">
-                      {stage.averageScore !== null ? stage.averageScore.toFixed(1) : '—'}
+                      {stage.adherenceScore !== null ? stage.adherenceScore.toFixed(1) : '—'}
                     </div>
                   </div>
                 ))}
@@ -1505,14 +1560,10 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                           jobId={jobId!}
                           analysisType={stages.find((s) => s.id === activeTab)?.analysis_type || 'resume'}
                           onMoved={async () => {
-                            const b = await api<{ lanes: any; stages: Stage[] }>(`/api/jobs/${jobId}/board`).catch(() => null)
-                            if (b) {
-                              setBoard(b as any)
-                              setStageEvaluationCounts((b as any).evaluation_counts_by_stage_id ?? {})
-                              setLatestScoresByApplication((b as any).latest_scores_by_application_id ?? {})
-                              setSelectedForBulk({})
-                            }
+                            await refreshBoard()
+                            setSelectedForBulk({})
                           }}
+                          onRefresh={refreshBoard}
                           onSelect={(it) => {
                             setCurrentItem({
                               application_id: it.application_id,

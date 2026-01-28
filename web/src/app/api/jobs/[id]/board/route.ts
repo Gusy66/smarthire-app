@@ -67,6 +67,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   // Map de score direto por app_stage (fallback) a partir de última run
   const appStageIds = appStages.map((as) => as.id)
   const latestRunScoreByAppStage = new Map<string, number>()
+  const latestRunStatusByAppStage = new Map<string, string>()
   const runCountByAppStage = new Map<string, number>()
   if (appStageIds.length) {
     const { data: runs, error: runsError } = await supabase
@@ -83,9 +84,13 @@ export async function GET(_req: NextRequest, { params }: Params) {
             (runCountByAppStage.get(r.application_stage_id) ?? 0) + 1
           )
         }
-        if (latestRunScoreByAppStage.has(r.application_stage_id)) continue
-        if (r.status === 'succeeded' && r.result && typeof r.result.score === 'number') {
-          latestRunScoreByAppStage.set(r.application_stage_id, Math.max(0, Math.min(10, Number(r.result.score))))
+        if (!latestRunStatusByAppStage.has(r.application_stage_id)) {
+          latestRunStatusByAppStage.set(r.application_stage_id, r.status)
+        }
+        if (!latestRunScoreByAppStage.has(r.application_stage_id)) {
+          if (r.status === 'succeeded' && r.result && typeof r.result.score === 'number') {
+            latestRunScoreByAppStage.set(r.application_stage_id, Math.max(0, Math.min(10, Number(r.result.score))))
+          }
         }
       }
     }
@@ -144,6 +149,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
         score: latestRunScoreByAppStage.get(appStageId) ?? null,
         evaluation_count: runCountByAppStage.get(appStageId) ?? 0,
         application_created_at: app.created_at,
+        run_status: latestRunStatusByAppStage.get(appStageId) ?? null,
       })
     }
   }
