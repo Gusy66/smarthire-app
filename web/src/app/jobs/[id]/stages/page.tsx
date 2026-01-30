@@ -6,6 +6,7 @@ import { useToast } from '@/components/ToastProvider'
 import StageAnalysisPanel from './_components/StageAnalysisPanel'
 import JobStageHeader from './_components/JobStageHeader'
 import CandidatesTable from './_components/CandidatesTable'
+import EditJobModal from '@/components/EditJobModal'
 
 type Stage = { id: string; name: string; description: string | null; order_index: number; threshold: number; stage_weight: number; analysis_type?: 'resume' | 'transcript' }
 type Candidate = { id: string; name: string; email?: string }
@@ -142,8 +143,10 @@ function formatMinutesToHours(totalMinutes: number) {
 
 function getStageEffortMinutes(stage: Stage) {
   const name = stage.name?.toLowerCase() || ''
+  if (stage.analysis_type === 'resume') return ESTIMATED_MINUTES.resume
+  if (stage.analysis_type === 'transcript') return ESTIMATED_MINUTES.transcript
   if (name.includes('prova') || name.includes('teste')) return ESTIMATED_MINUTES.proof
-  if (stage.analysis_type === 'transcript' || name.includes('entrevista')) return ESTIMATED_MINUTES.transcript
+  if (name.includes('entrevista')) return ESTIMATED_MINUTES.transcript
   return ESTIMATED_MINUTES.resume
 }
 
@@ -151,10 +154,22 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const { notify } = useToast()
   const [jobId, setJobId] = useState<string | null>(null)
   const [stages, setStages] = useState<Stage[]>([])
-  const [jobInfo, setJobInfo] = useState<{ id: string; title: string; created_at?: string | null; status?: string | null } | null>(null)
+  const [jobInfo, setJobInfo] = useState<{
+    id: string
+    title: string
+    created_at?: string | null
+    status?: string | null
+    department?: string | null
+    location?: string | null
+    salary?: string | null
+    job_description?: string | null
+    responsibilities?: string | null
+    requirements_and_skills?: string | null
+  } | null>(null)
+  const [showEditJobModal, setShowEditJobModal] = useState(false)
   const [creating, setCreating] = useState(false)
   const [activeTab, setActiveTab] = useState<string | null>(null)
-  const [activeMainTab, setActiveMainTab] = useState<'candidatos' | 'etapas' | 'analytics'>('candidatos')
+  const [activeMainTab, setActiveMainTab] = useState<'candidatos' | 'etapas' | 'analytics' | 'info'>('candidatos')
   const [board, setBoard] = useState<{
     lanes: Record<
       string,
@@ -163,18 +178,31 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         application_stage_id: string
         candidate: any
         score: number | null
-        stage_id?: string
+        stage_id: string
         evaluation_count?: number
         application_created_at?: string | null
       }[]
     >
     stages: Stage[]
+    evaluation_counts_by_stage_id?: Record<string, number>
+    latest_scores_by_application_id?: Record<string, number>
+    stage_scores_by_stage_id?: Record<string, number[]>
+  } | null>(null)
+  const [panelData, setPanelData] = useState<{
+    stages: { id: string; stage_weight: number }[]
+    items: { stages: { stage_id: string; score: number }[] }[]
   } | null>(null)
   const [selectedForBulk, setSelectedForBulk] = useState<Record<string, boolean>>({})
   const [currentItem, setCurrentItem] = useState<{ application_id: string; application_stage_id: string; candidate: { id: string; name?: string } } | null>(null)
   const [stageForm, setStageForm] = useState({ name: '', description: '', threshold: 0, stage_weight: 1 })
   const [editingStageId, setEditingStageId] = useState<string | null>(null)
-  const [editingStageForm, setEditingStageForm] = useState<{ name: string; description: string; threshold: number; stage_weight: number }>({ name: '', description: '', threshold: 0, stage_weight: 1 })
+  const [editingStageForm, setEditingStageForm] = useState<{ name: string; description: string; threshold: number; stage_weight: number; analysis_type: 'resume' | 'transcript' }>({
+    name: '',
+    description: '',
+    threshold: 0,
+    stage_weight: 1,
+    analysis_type: 'resume',
+  })
   const [updatingStage, setUpdatingStage] = useState(false)
 
   // Candidates assigned to the job (simplificado: todos candidatos do tenant)
@@ -189,7 +217,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   const [analysisByStage, setAnalysisByStage] = useState<Record<string, StageAnalysisResult | null>>({})
   const [analysisLoading, setAnalysisLoading] = useState<Record<string, boolean>>({})
   const [analysisExpanded, setAnalysisExpanded] = useState<Record<string, boolean>>({})
-  const [showFullStageDescription, setShowFullStageDescription] = useState(false)
   const pollingTimeouts = useRef<Record<string, number>>({})
   const [stageEvaluationCounts, setStageEvaluationCounts] = useState<Record<string, number>>({})
   const [latestScoresByApplication, setLatestScoresByApplication] = useState<Record<string, number>>({})
@@ -201,6 +228,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       setStageEvaluationCounts((b as any).evaluation_counts_by_stage_id ?? {})
       setLatestScoresByApplication((b as any).latest_scores_by_application_id ?? {})
     }
+    const panel = await api<{ stages: { id: string; stage_weight: number }[]; items: { stages: { stage_id: string; score: number }[] }[] }>(`/api/jobs/${jobId}/panel`).catch(() => null)
+    if (panel) setPanelData(panel)
   }, [jobId])
   
   // Estado para atribuição de candidatos
@@ -217,7 +246,8 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     description: '',
     threshold: 7,
     stage_weight: 1,
-    analysis_type: 'resume' as 'resume' | 'transcript'
+    analysis_type: 'resume' as 'resume' | 'transcript',
+    prompt_template_id: null as string | null,
   })
 
   const clearStagePolling = useCallback((stageId: string) => {
@@ -234,9 +264,10 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     }
   }, [])
 
-  useEffect(() => {
-    setShowFullStageDescription(false)
-  }, [activeTab])
+  const defaultPromptTemplate = useMemo(
+    () => promptTemplates.find((template) => template.is_default) || null,
+    [promptTemplates]
+  )
 
   const orderedStages = useMemo(() => {
     return [...stages].sort((a, b) => a.order_index - b.order_index)
@@ -324,19 +355,25 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     const timeOpenMs = jobCreatedAt ? now - jobCreatedAt : null
 
     const approvedApps = applications.filter((app) => app.status === 'approved')
+    const approvalDurations = approvedApps
+      .map((app) => {
+        const approvedAt = app.approved_at ? new Date(app.approved_at).getTime() : null
+        if (!approvedAt || !jobCreatedAt) return null
+        return Math.max(0, approvedAt - jobCreatedAt)
+      })
+      .filter((value): value is number => typeof value === 'number')
     const slaMs =
-      approvedApps.length > 0
-        ? approvedApps.reduce((sum, app) => {
-            const createdAt = app.created_at ? new Date(app.created_at).getTime() : now
-            return sum + (now - createdAt)
-          }, 0) / approvedApps.length
+      approvalDurations.length > 0
+        ? approvalDurations.reduce((sum, value) => sum + value, 0) / approvalDurations.length
         : null
 
     // --- Índice de aderência por etapa (top 20% de cada etapa)
     const stageScoreSummary = stageList.map((stage) => {
-      const stageScores = (board?.lanes?.[stage.id] ?? [])
-        .map((item) => item.score)
-        .filter((score): score is number => typeof score === 'number')
+      const stageScores =
+        board?.stage_scores_by_stage_id?.[stage.id] ??
+        (board?.lanes?.[stage.id] ?? [])
+          .map((item) => item.score)
+          .filter((score): score is number => typeof score === 'number')
       const avg =
         stageScores.length > 0 ? stageScores.reduce((sum, score) => sum + score, 0) / stageScores.length : null
       const topCount = stageScores.length ? Math.max(1, Math.ceil(stageScores.length * 0.2)) : 0
@@ -346,42 +383,52 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     })
 
     // --- Índice de aderência total da vaga (top 20% do ranking ponderado por stage_weight)
-    const stageWeightTotal = stageList.reduce((sum, stage) => sum + (stage.stage_weight || 0), 0) || 1
-    const scoresByApplication = new Map<
-      string,
-      { sumWeighted: number; totalWeight: number }
-    >()
-
-    stageList.forEach((stage) => {
-      const items = board?.lanes?.[stage.id] ?? []
-      items.forEach((item: any) => {
-        if (typeof item.score === 'number') {
-          const entry = scoresByApplication.get(item.application_id) || { sumWeighted: 0, totalWeight: stageWeightTotal }
-          entry.sumWeighted += item.score * stage.stage_weight
-          // totalWeight já leva o total de etapas (incluindo sem nota) para ponderar como o ranking
-          scoresByApplication.set(item.application_id, entry)
-        } else {
-          // mesmo sem score, garante totalWeight preenchido
-          if (!scoresByApplication.has(item.application_id)) {
-            scoresByApplication.set(item.application_id, { sumWeighted: 0, totalWeight: stageWeightTotal })
+    const rankingScores = (() => {
+      if (panelData?.items?.length && panelData?.stages?.length) {
+        const totalWeight = panelData.stages.reduce((sum, stage) => sum + (stage.stage_weight || 0), 0) || 1
+        return panelData.items
+          .map((row) => {
+            const totalScore = panelData.stages.reduce((sum, stage) => {
+              const stageData = row.stages.find((x) => x.stage_id === stage.id)
+              return sum + (stageData?.score || 0) * stage.stage_weight
+            }, 0)
+            return totalWeight > 0 ? totalScore / totalWeight : 0
+          })
+          .filter((score) => Number.isFinite(score))
+      }
+      const stageWeightTotal = stageList.reduce((sum, stage) => sum + (stage.stage_weight || 0), 0) || 1
+      const scoresByApplication = new Map<
+        string,
+        { sumWeighted: number; totalWeight: number }
+      >()
+      stageList.forEach((stage) => {
+        const items = board?.lanes?.[stage.id] ?? []
+        items.forEach((item: any) => {
+          if (typeof item.score === 'number') {
+            const entry = scoresByApplication.get(item.application_id) || { sumWeighted: 0, totalWeight: stageWeightTotal }
+            entry.sumWeighted += item.score * stage.stage_weight
+            scoresByApplication.set(item.application_id, entry)
+          } else {
+            if (!scoresByApplication.has(item.application_id)) {
+              scoresByApplication.set(item.application_id, { sumWeighted: 0, totalWeight: stageWeightTotal })
+            }
           }
-        }
+        })
       })
-    })
+      return Array.from(scoresByApplication.values()).map((entry) =>
+        entry.totalWeight > 0 ? entry.sumWeighted / entry.totalWeight : 0
+      )
+    })()
 
-    const applicationAvgScores = Array.from(scoresByApplication.values()).map((entry) =>
-      entry.totalWeight > 0 ? entry.sumWeighted / entry.totalWeight : 0
-    )
-
-    const hasScores = applicationAvgScores.length > 0
-    const topCountTotal = hasScores ? Math.max(1, Math.ceil(applicationAvgScores.length * 0.2)) : 0
-    const topScoresTotal = [...applicationAvgScores].sort((a, b) => b - a).slice(0, topCountTotal)
+    const hasScores = rankingScores.length > 0
+    const topCountTotal = hasScores ? Math.max(1, Math.ceil(rankingScores.length * 0.2)) : 0
+    const topScoresTotal = [...rankingScores].sort((a, b) => b - a).slice(0, topCountTotal)
     const adherenceScore = topScoresTotal.length
       ? topScoresTotal.reduce((sum, score) => sum + score, 0) / topScoresTotal.length
       : 0
     const hasAdherence = topScoresTotal.length > 0
     const averageScore = hasScores
-      ? applicationAvgScores.reduce((sum, score) => sum + score, 0) / applicationAvgScores.length
+      ? rankingScores.reduce((sum, score) => sum + score, 0) / rankingScores.length
       : 0
 
     const adherenceLabel =
@@ -424,7 +471,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       resumeEvaluations,
       costSaved,
     }
-  }, [orderedStages, board, totalCandidates, applications, jobInfo, stageEvaluationCounts])
+  }, [orderedStages, board, totalCandidates, applications, jobInfo, stageEvaluationCounts, panelData])
 
   // Poll board when there is any analysis running
   useEffect(() => {
@@ -440,19 +487,25 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     return () => window.clearInterval(id)
   }, [board, refreshBoard])
 
+  const loadJobInfo = useCallback(async (id: string) => {
+    const job = await api<{ item?: { id: string; title: string; created_at?: string | null; status?: string | null; department?: string | null; location?: string | null; salary?: string | null; job_description?: string | null; responsibilities?: string | null; requirements_and_skills?: string | null } }>(
+      `/api/jobs/${id}`
+    )
+    if (!job?.item) {
+      notify({ title: 'Vaga não encontrada', variant: 'error' })
+      return null
+    }
+    setJobInfo(job.item)
+    return job.item
+  }, [notify])
+
 
   useEffect(() => {
     ;(async () => {
       const { id } = await params
       setJobId(id)
-      const job = await api<{ item?: { id: string; title: string; created_at?: string | null; status?: string | null } }>(
-        `/api/jobs/${id}`
-      )
-      if (!job?.item) {
-        notify({ title: 'Vaga não encontrada', variant: 'error' })
-        return
-      }
-      setJobInfo(job.item)
+      const loaded = await loadJobInfo(id)
+      if (!loaded) return
 
       const { items } = await api<{ items: Stage[] }>(`/api/jobs/${id}/stages`)
       setStages(items)
@@ -485,13 +538,19 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
         setLatestScoresByApplication((b as any).latest_scores_by_application_id ?? {})
       } catch {}
       try {
+        const panel = await api<{ stages: { id: string; stage_weight: number }[]; items: { stages: { stage_id: string; score: number }[] }[] }>(
+          `/api/jobs/${id}/panel`
+        )
+        setPanelData(panel)
+      } catch {}
+      try {
         const pts = await fetchPromptTemplates()
         setPromptTemplates(pts)
       } catch (error: any) {
         notify({ title: 'Erro ao carregar templates', description: error?.message, variant: 'error' })
       }
     })()
-  }, [params])
+  }, [params, loadJobInfo])
 
 
   useEffect(() => {
@@ -562,7 +621,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     }
     setCreating(true)
     try {
-      await api<{ id: string }>(`/api/jobs/${jobId}/stages`, {
+      const created = await api<{ id: string }>(`/api/jobs/${jobId}/stages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -570,9 +629,23 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
           order_index: stages.length, // adiciona no final
         }),
       })
+      if (created.id && newStageForm.prompt_template_id) {
+        await api(`/api/stages/${created.id}/prompt-template`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt_template_id: newStageForm.prompt_template_id }),
+        })
+      }
       const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`)
       setStages(items)
-      setNewStageForm({ name: '', description: '', threshold: 7, stage_weight: 1, analysis_type: 'resume' })
+      setNewStageForm({
+        name: '',
+        description: '',
+        threshold: 7,
+        stage_weight: 1,
+        analysis_type: 'resume',
+        prompt_template_id: null,
+      })
       setShowAddStageModal(false)
       notify({ title: 'Etapa criada com sucesso!', variant: 'success' })
     } catch (error: any) {
@@ -589,6 +662,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
       description: stage.description || '',
       threshold: stage.threshold ?? 0,
       stage_weight: stage.stage_weight ?? 1,
+      analysis_type: stage.analysis_type ?? 'resume',
     })
   }
 
@@ -609,6 +683,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
           description: editingStageForm.description,
           threshold: editingStageForm.threshold,
           stage_weight: editingStageForm.stage_weight,
+          analysis_type: editingStageForm.analysis_type,
         }),
       })
       const { items } = await api<{ items: Stage[] }>(`/api/jobs/${jobId}/stages`)
@@ -933,6 +1008,17 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
 
       <div className="space-y-8 px-4 md:px-8">
         <div className="bg-white border border-gray-200 shadow-sm rounded-2xl p-1 inline-flex">
+          <button
+            type="button"
+            onClick={() => setActiveMainTab('info')}
+            className={`px-5 py-2 text-sm font-semibold rounded-xl transition-colors ${
+              activeMainTab === 'info'
+                ? 'bg-gray-900 text-white shadow'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            Informações da vaga
+          </button>
           <button
             type="button"
             onClick={() => setActiveMainTab('candidatos')}
@@ -1269,9 +1355,9 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                   </div>
                 </div>
                 <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
-                  <div className="text-sm text-gray-500">SLA de contratação</div>
+                  <div className="text-sm text-gray-500">SLA médio de contratação</div>
                   <div className="mt-2 text-3xl font-semibold text-emerald-700">{formatDuration(analyticsData.slaMs)}</div>
-                  <div className="text-xs text-gray-500 mt-2">Tempo médio até a etapa final</div>
+                  <div className="text-xs text-gray-500 mt-2">Tempo médio até a aprovação</div>
                 </div>
                 <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
                   <div className="text-sm text-gray-500">Nota média da vaga</div>
@@ -1389,7 +1475,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
             </div>
 
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h3 className="text-lg font-semibold text-gray-900">Índice por etapa (top 20%)</h3>
+              <h3 className="text-lg font-semibold text-gray-900">Indice de aderencia por etapa</h3>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
                 {analyticsData.stageScoreSummary.map((stage) => (
                   <div key={stage.stageId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
@@ -1397,6 +1483,24 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                     <div className="text-xs text-gray-500">Média dos top 20% da etapa</div>
                     <div className="mt-2 text-lg font-semibold text-gray-900">
                       {stage.adherenceScore !== null ? stage.adherenceScore.toFixed(1) : '—'}
+                    </div>
+                  </div>
+                ))}
+                {analyticsData.stageScoreSummary.length === 0 && (
+                  <div className="text-sm text-gray-500">Nenhuma etapa cadastrada.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h3 className="text-lg font-semibold text-gray-900">Media por etapa</h3>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {analyticsData.stageScoreSummary.map((stage) => (
+                  <div key={stage.stageId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                    <div className="text-sm font-medium text-gray-900">{stage.stageName}</div>
+                    <div className="text-xs text-gray-500">Média total da etapa</div>
+                    <div className="mt-2 text-lg font-semibold text-gray-900">
+                      {stage.averageScore !== null ? stage.averageScore.toFixed(1) : '—'}
                     </div>
                   </div>
                 ))}
@@ -1515,29 +1619,6 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                                 )
                               })()}
                     </div>
-                            {(() => {
-                              const description = stages.find((s) => s.id === activeTab)?.description?.trim() || ''
-                              if (!description) return null
-                              const maxLength = 160
-                              const isLong = description.length > maxLength
-                              const text = showFullStageDescription || !isLong
-                                ? description
-                                : `${description.slice(0, maxLength).trim()}...`
-                              return (
-                                <div className="mt-2 space-y-1">
-                                  <p className="text-xs text-gray-600 whitespace-pre-wrap">{text}</p>
-                                  {isLong && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowFullStageDescription((prev) => !prev)}
-                                      className="text-xs font-medium text-blue-600 hover:text-blue-700"
-                                    >
-                                      {showFullStageDescription ? 'Ver menos' : 'Ver mais'}
-                                    </button>
-                                  )}
-                                </div>
-                              )
-                            })()}
                           </div>
                 </div>
               </div>
@@ -1584,7 +1665,86 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
 
           </div>
         )}
+
+        {activeMainTab === 'info' && (
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Informações da vaga</h3>
+                  <p className="text-sm text-gray-600">
+                    Dados cadastrados no momento da criação da vaga.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEditJobModal(true)}
+                  disabled={!jobId}
+                  className="text-sm font-semibold text-blue-600 hover:text-blue-700 hover:underline disabled:text-gray-400 disabled:cursor-not-allowed"
+                >
+                  Editar vaga
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <h4 className="text-base font-semibold text-gray-900">Departamento</h4>
+                <p className="mt-3 text-base text-gray-700 whitespace-pre-wrap">
+                  {jobInfo?.department?.trim() || 'Não informado.'}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <h4 className="text-base font-semibold text-gray-900">Localização</h4>
+                <p className="mt-3 text-base text-gray-700 whitespace-pre-wrap">
+                  {jobInfo?.location?.trim() || 'Não informado.'}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <h4 className="text-base font-semibold text-gray-900">Faixa Salarial</h4>
+                <p className="mt-3 text-base text-gray-700 whitespace-pre-wrap">
+                  {jobInfo?.salary?.trim() || 'Não informado.'}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <h4 className="text-base font-semibold text-gray-900">Descrição do Cargo</h4>
+                <p className="mt-3 text-base text-gray-700 whitespace-pre-wrap">
+                  {jobInfo?.job_description?.trim() || 'Não informado.'}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <h4 className="text-base font-semibold text-gray-900">Responsabilidades e Atribuições</h4>
+                <p className="mt-3 text-base text-gray-700 whitespace-pre-wrap">
+                  {jobInfo?.responsibilities?.trim() || 'Não informado.'}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                <h4 className="text-base font-semibold text-gray-900">Requisitos e Habilidades</h4>
+                <p className="mt-3 text-base text-gray-700 whitespace-pre-wrap">
+                  {jobInfo?.requirements_and_skills?.trim() || 'Não informado.'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {showEditJobModal && (
+        <EditJobModal
+          jobId={jobId}
+          onClose={() => setShowEditJobModal(false)}
+          onSaved={() => {
+            if (jobId) {
+              loadJobInfo(jobId)
+            }
+          }}
+        />
+      )}
 
       {/* Modal para adicionar nova etapa */}
       {showAddStageModal && (
@@ -1617,14 +1777,30 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
-                <textarea
-                  value={newStageForm.description}
-                  onChange={(e) => setNewStageForm((f) => ({ ...f, description: e.target.value }))}
-                  placeholder="Descreva o que será avaliado nesta etapa..."
-                  rows={3}
+                <div className="mb-1 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <label className="block text-sm font-medium text-gray-700">Template da etapa</label>
+                  <a href="/settings/prompts" className="text-xs text-blue-600 underline">
+                    Gerenciar templates
+                  </a>
+                </div>
+                <select
+                  value={newStageForm.prompt_template_id ?? ''}
+                  onChange={(e) => setNewStageForm((f) => ({ ...f, prompt_template_id: e.target.value || null }))}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+                >
+                  <option value="">
+                    {defaultPromptTemplate ? `Usar padrão (${defaultPromptTemplate.name})` : 'Selecione um template'}
+                  </option>
+                  {promptTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                      {template.is_default ? ' (padrão)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  O template define as instruções que a IA usará para avaliar candidatos.
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -1739,14 +1915,35 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
-                <textarea
-                  value={editingStageForm.description}
-                  onChange={(e) => setEditingStageForm((prev) => ({ ...prev, description: e.target.value }))}
+                <div className="mb-1 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <label className="block text-sm font-medium text-gray-700">Template da etapa</label>
+                  <a href="/settings/prompts" className="text-xs text-blue-600 underline">
+                    Gerenciar templates
+                  </a>
+                </div>
+                <select
+                  value={editingStageId ? stagePromptMap[editingStageId] ?? '' : ''}
+                  onChange={(e) => {
+                    if (editingStageId) {
+                      handleStagePromptChange(editingStageId, e.target.value || null)
+                    }
+                  }}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                  rows={3}
-                  placeholder="Descreva o objetivo desta etapa"
-                />
+                  disabled={editingStageId ? promptLoadingStage === editingStageId : true}
+                >
+                  <option value="">
+                    {defaultPromptTemplate ? `Usar padrão (${defaultPromptTemplate.name})` : 'Selecione um template'}
+                  </option>
+                  {promptTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                      {template.is_default ? ' (padrão)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  O template define as instruções que a IA usará para avaliar candidatos.
+                </p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -1774,6 +1971,39 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Análise</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="editing_analysis_type"
+                      value="resume"
+                      checked={editingStageForm.analysis_type === 'resume'}
+                      onChange={() => setEditingStageForm((prev) => ({ ...prev, analysis_type: 'resume' }))}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">📄 Análise de Currículo</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="editing_analysis_type"
+                      value="transcript"
+                      checked={editingStageForm.analysis_type === 'transcript'}
+                      onChange={() => setEditingStageForm((prev) => ({ ...prev, analysis_type: 'transcript' }))}
+                      className="h-4 w-4 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-sm text-gray-700">🎤 Análise de Transcrição</span>
+                  </label>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {editingStageForm.analysis_type === 'resume'
+                    ? 'A IA analisará currículos dos candidatos nesta etapa.'
+                    : 'A IA analisará transcrições de entrevistas nesta etapa.'}
+                </p>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2">

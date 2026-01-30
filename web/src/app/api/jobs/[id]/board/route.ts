@@ -98,6 +98,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const evaluationCountsByStageId: Record<string, number> = {}
   const latestScoreByApplicationId: Record<string, number> = {}
+  const stageScoresByStageId: Record<string, number[]> = {}
+  stages?.forEach((s) => { stageScoresByStageId[s.id] = [] })
   const allAppStageIds = allAppStages.map((s) => s.id)
   if (allAppStageIds.length) {
     const { data: allRuns } = await supabase
@@ -108,6 +110,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       .order('created_at', { ascending: false })
     if (allRuns) {
       const stageInfoByAppStage = new Map(allAppStages.map((s) => [s.id, s]))
+      const latestScoreByAppStage = new Map<string, number>()
       for (const run of allRuns) {
         if (run.status !== 'succeeded') continue
         const stageInfo = stageInfoByAppStage.get(run.application_stage_id)
@@ -115,14 +118,15 @@ export async function GET(_req: NextRequest, { params }: Params) {
           evaluationCountsByStageId[stageInfo.stage_id] =
             (evaluationCountsByStageId[stageInfo.stage_id] ?? 0) + 1
         }
-        if (stageInfo && latestScoreByApplicationId[stageInfo.application_id] == null) {
-          const score =
-            run.result && typeof (run.result as any).score === 'number'
-              ? Math.max(0, Math.min(10, Number((run.result as any).score)))
-              : null
-          if (score != null) {
-            latestScoreByApplicationId[stageInfo.application_id] = score
-          }
+        const score =
+          run.result && typeof (run.result as any).score === 'number'
+            ? Math.max(0, Math.min(10, Number((run.result as any).score)))
+            : null
+        if (stageInfo && score != null && !latestScoreByAppStage.has(run.application_stage_id)) {
+          latestScoreByAppStage.set(run.application_stage_id, score)
+          latestScoreByApplicationId[stageInfo.application_id] ??= score
+          stageScoresByStageId[stageInfo.stage_id] ??= []
+          stageScoresByStageId[stageInfo.stage_id].push(score)
         }
       }
     }
@@ -159,6 +163,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     lanes: stageIdToItems,
     evaluation_counts_by_stage_id: evaluationCountsByStageId,
     latest_scores_by_application_id: latestScoreByApplicationId,
+    stage_scores_by_stage_id: stageScoresByStageId,
   })
 }
 

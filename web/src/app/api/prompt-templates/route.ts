@@ -11,7 +11,7 @@ export async function GET() {
     const { data, error } = await supabase
       .from('prompt_templates')
       .select('id, name, description, content, is_default, created_at, updated_at')
-      .eq('user_id', user.id)
+      .eq('company_id', user.company_id)
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: false })
 

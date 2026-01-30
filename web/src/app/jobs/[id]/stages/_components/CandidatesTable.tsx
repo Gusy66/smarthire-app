@@ -38,6 +38,8 @@ export default function CandidatesTable({
   const [sortBy, setSortBy] = useState<'name' | 'score'>('name')
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [bulkAnalyzing, setBulkAnalyzing] = useState(false)
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false)
+  const [bulkMoving, setBulkMoving] = useState(false)
 
   async function handleMoveCandidate(applicationStageId: string, toStageId: string) {
     if (!jobId) return
@@ -97,7 +99,7 @@ export default function CandidatesTable({
       .filter(([, v]) => v)
       .map(([id]) => id)
     if (!selectedIds.length) {
-      notify({ title: 'Selecione candidatos', description: 'Marque pelo menos um candidato.', variant: 'warning' })
+      notify({ title: 'Selecione candidatos', description: 'Marque pelo menos um candidato.', variant: 'info' })
       return
     }
     setBulkAnalyzing(true)
@@ -121,6 +123,33 @@ export default function CandidatesTable({
       notify({ title: 'Falha ao iniciar análise', description: e?.message, variant: 'error' })
     } finally {
       setBulkAnalyzing(false)
+    }
+  }
+
+  async function handleMoveSelected(toStageId: string) {
+    if (!jobId) return
+    const selectedIds = Object.entries(selectedMap)
+      .filter(([, v]) => v)
+      .map(([id]) => id)
+    if (!selectedIds.length) {
+      notify({ title: 'Selecione candidatos', description: 'Marque pelo menos um candidato.', variant: 'info' })
+      return
+    }
+    setBulkMoving(true)
+    try {
+      await moveBulk(jobId, selectedIds, toStageId)
+      setSelectedMap((prev) => {
+        const next = { ...prev }
+        selectedIds.forEach((id) => { next[id] = false })
+        return next
+      })
+      notify({ title: 'Candidatos movidos', description: `${selectedIds.length} candidato(s) movido(s).`, variant: 'success' })
+      onMoved?.()
+    } catch (e: any) {
+      notify({ title: 'Falha ao mover candidatos', description: e?.message, variant: 'error' })
+    } finally {
+      setBulkMoving(false)
+      setBulkMoveOpen(false)
     }
   }
 
@@ -170,6 +199,36 @@ export default function CandidatesTable({
           >
             {bulkAnalyzing ? 'Analisando...' : 'Analisar selecionados'}
           </button>
+          {stages && stages.length > 1 && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setBulkMoveOpen((prev) => !prev)}
+                disabled={bulkMoving}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100 disabled:opacity-50"
+              >
+                {bulkMoving ? 'Movendo...' : 'Mover selecionados'}
+              </button>
+              {bulkMoveOpen && (
+                <div className="absolute left-0 z-30 mt-2 w-56 rounded-xl border border-gray-200 bg-white shadow-lg">
+                  <div className="px-3 py-2 text-xs font-medium text-gray-500 border-b border-gray-100">
+                    Mover para:
+                  </div>
+                  <div className="max-h-48 overflow-auto py-1">
+                    {stages.filter(s => s.id !== stage.id).map((s) => (
+                      <button
+                        key={s.id}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                        onClick={() => handleMoveSelected(s.id)}
+                      >
+                        {s.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">Ordenar:</span>
             <select
@@ -234,7 +293,11 @@ export default function CandidatesTable({
                       </div>
                       <div>
                         <Link
-                          href={`/candidates?candidateId=${it.candidate.id}`}
+                          href={
+                            jobId
+                              ? `/candidates?candidateId=${it.candidate.id}&returnTo=${encodeURIComponent(`/jobs/${jobId}/stages`)}`
+                              : `/candidates?candidateId=${it.candidate.id}`
+                          }
                           className="text-sm font-semibold text-blue-700 hover:text-blue-800 hover:underline"
                           title="Ver detalhes do candidato"
                         >

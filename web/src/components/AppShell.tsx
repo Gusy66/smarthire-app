@@ -8,23 +8,63 @@ import { getSupabaseBrowser } from '@/lib/supabaseBrowser'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const [authStatus, setAuthStatus] = useState<'loading' | 'authed' | 'guest'>('loading')
   const supabase = getSupabaseBrowser()
   
   // Rotas que não devem mostrar o layout principal (Sidebar/NavBar)
   const isExcludedRoute = pathname?.startsWith('/platform')
+  const isAuthRoute = pathname === '/login' || pathname === '/signup'
+  const isProtectedRoute = pathname ? ['/dashboard', '/jobs', '/candidates', '/settings'].some((path) => pathname === path || pathname.startsWith(`${path}/`)) : false
+
+  const checkBackendAuth = async (attempt = 0): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/auth/me', { credentials: 'same-origin' })
+      if (res.status === 401 && attempt < 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        return checkBackendAuth(attempt + 1)
+      }
+      return res.ok
+    } catch {
+      return false
+    }
+  }
 
   useEffect(() => {
     let active = true
 
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       if (!active) return
-      setIsAuthenticated(!!data.session)
+      if (data.session) {
+        setAuthStatus('authed')
+        return
+      }
+      const backendOk = await checkBackendAuth()
+      if (!active) return
+      if (backendOk) {
+        setAuthStatus('authed')
+        return
+      }
+      try {
+        const { data: refreshed } = await supabase.auth.refreshSession()
+        if (!active) return
+        if (refreshed.session) {
+          setAuthStatus('authed')
+          return
+        }
+      } catch {}
+      if (!active) return
+      setAuthStatus('guest')
     })
 
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return
-      setIsAuthenticated(!!session)
+      if (_event === 'SIGNED_OUT') {
+        setAuthStatus('guest')
+        return
+      }
+      if (session) {
+        setAuthStatus('authed')
+      }
     })
 
     return () => {
@@ -33,8 +73,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [supabase])
   
-  if (isExcludedRoute || isAuthenticated !== true) {
+  if (isExcludedRoute || isAuthRoute) {
     // Renderizar apenas o conteúdo sem Sidebar/NavBar
+    return <>{children}</>
+  }
+  if (authStatus === 'guest') {
+    return <>{children}</>
+  }
+  if (authStatus === 'loading' && !isProtectedRoute) {
     return <>{children}</>
   }
 

@@ -7,7 +7,7 @@ type Params = { params: Promise<{ stageId: string }> }
 export async function PUT(req: NextRequest, { params }: Params) {
   const { stageId } = await params
   const body = await req.json()
-  const { name, order_index, threshold, stage_weight, description } = body || {}
+  const { name, order_index, threshold, stage_weight, description, analysis_type } = body || {}
   const supabase = getSupabaseAdmin()
   const user = await requireUser()
 
@@ -23,7 +23,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
 
   const { error } = await supabase
     .from('job_stages')
-    .update({ name, order_index, threshold, stage_weight, description })
+    .update({ name, order_index, threshold, stage_weight, description, analysis_type })
     .eq('id', stageId)
   if (error) return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
   return Response.json({ ok: true })

@@ -13,11 +13,18 @@ type Candidate = {
 
 type StageForm = {
   name: string
-  description: string
+  description?: string
   threshold: number
   stage_weight: number
   order_index: number
   analysis_type: 'resume' | 'transcript'
+  prompt_template_id?: string | null
+}
+
+type PromptTemplate = {
+  id: string
+  name: string
+  is_default: boolean
 }
 
 type JobFormState = {
@@ -117,15 +124,22 @@ export default function NewJobPage() {
   const [benefitInput, setBenefitInput] = useState('')
   const [stageInput, setStageInput] = useState({
     name: '',
-    description: '',
     threshold: 7,
     stage_weight: 1,
     analysis_type: 'resume' as 'resume' | 'transcript',
+    prompt_template_id: null as string | null,
   })
 
   const [availableCandidates, setAvailableCandidates] = useState<Candidate[]>([])
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([])
   const [candidateSearchTerm, setCandidateSearchTerm] = useState('')
+  const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([])
+  const [promptTemplatesLoading, setPromptTemplatesLoading] = useState(false)
+
+  const defaultPromptTemplate = useMemo(
+    () => promptTemplates.find((template) => template.is_default) || null,
+    [promptTemplates]
+  )
 
   const filteredCandidates = useMemo(() => {
     const query = candidateSearchTerm.trim().toLowerCase()
@@ -186,6 +200,30 @@ export default function NewJobPage() {
       .catch(() => setAvailableCandidates([]))
   }, [])
 
+  useEffect(() => {
+    let isMounted = true
+    setPromptTemplatesLoading(true)
+    fetch('/api/prompt-templates')
+      .then((r) => r.json().then((j) => ({ ok: r.ok, json: j })))
+      .then(({ ok, json }) => {
+        if (!isMounted) return
+        if (!ok) {
+          throw new Error(json?.error?.message || 'Erro ao carregar templates')
+        }
+        setPromptTemplates(json.items || [])
+      })
+      .catch((error) => {
+        if (!isMounted) return
+        notify({ title: 'Erro ao carregar templates', description: error?.message, variant: 'error' })
+      })
+      .finally(() => {
+        if (isMounted) setPromptTemplatesLoading(false)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [notify])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.title.trim()) {
@@ -213,11 +251,27 @@ export default function NewJobPage() {
 
       if (jobId && form.stages.length > 0) {
         for (const stage of form.stages) {
-          await fetch(`/api/jobs/${jobId}/stages`, {
+          const stageRes = await fetch(`/api/jobs/${jobId}/stages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(stage),
           })
+          const stageJson = await stageRes.json().catch(() => null)
+          if (!stageRes.ok) {
+            throw new Error(stageJson?.error?.message || 'Erro ao criar etapa')
+          }
+          const stageId = stageJson?.id as string | undefined
+          if (stageId && stage.prompt_template_id) {
+            const promptRes = await fetch(`/api/stages/${stageId}/prompt-template`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prompt_template_id: stage.prompt_template_id }),
+            })
+            const promptJson = await promptRes.json().catch(() => null)
+            if (!promptRes.ok) {
+              throw new Error(promptJson?.error?.message || 'Erro ao definir template da etapa')
+            }
+          }
         }
       }
 
@@ -233,6 +287,12 @@ export default function NewJobPage() {
 
       notify({ title: 'Vaga criada com sucesso', variant: 'success' })
       router.push('/jobs')
+    } catch (error: any) {
+      notify({
+        title: 'Erro ao criar vaga',
+        description: error?.message || 'Não foi possível criar a vaga.',
+        variant: 'error',
+      })
     } finally {
       setSubmitting(false)
     }
@@ -270,15 +330,16 @@ export default function NewJobPage() {
         ...f.stages,
         {
           name: stageInput.name,
-          description: stageInput.description,
+          description: '',
           threshold: stageInput.threshold,
           stage_weight: stageInput.stage_weight,
           order_index: f.stages.length,
           analysis_type: stageInput.analysis_type,
+          prompt_template_id: stageInput.prompt_template_id,
         },
       ],
     }))
-    setStageInput({ name: '', description: '', threshold: 7, stage_weight: 1, analysis_type: 'resume' })
+    setStageInput({ name: '', threshold: 7, stage_weight: 1, analysis_type: 'resume', prompt_template_id: null })
     notify({ title: 'Etapa adicionada', variant: 'success' })
   }
 
@@ -684,13 +745,31 @@ export default function NewJobPage() {
                       />
                     </div>
                     <div className="lg:col-span-4 flex flex-col gap-2">
-                      <label className="text-xs uppercase tracking-wide text-gray-500">Descrição da etapa</label>
-                      <textarea
-                        value={stageInput.description}
-                        onChange={(e) => setStageInput((s) => ({ ...s, description: e.target.value }))}
-                        placeholder="Explique o objetivo e os critérios da etapa"
-                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
-                      />
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <label className="text-xs uppercase tracking-wide text-gray-500">Template da etapa</label>
+                        <a href="/settings/prompts" className="text-xs text-blue-600 underline">
+                          Gerenciar templates
+                        </a>
+                      </div>
+                      <select
+                        value={stageInput.prompt_template_id ?? ''}
+                        onChange={(e) => setStageInput((s) => ({ ...s, prompt_template_id: e.target.value || null }))}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/20 focus:border-gray-900/40"
+                        disabled={promptTemplatesLoading}
+                      >
+                        <option value="">
+                          {defaultPromptTemplate ? `Usar padrão (${defaultPromptTemplate.name})` : 'Selecione um template'}
+                        </option>
+                        {promptTemplates.map((template) => (
+                          <option key={template.id} value={template.id}>
+                            {template.name}
+                            {template.is_default ? ' (padrão)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-500">
+                        O template define as instruções que a IA usará para analisar candidatos nesta etapa.
+                      </p>
                     </div>
                     <div className="lg:col-span-4 flex flex-col gap-2">
                       <label className="text-xs uppercase tracking-wide text-gray-500">Tipo de Análise</label>
@@ -748,7 +827,14 @@ export default function NewJobPage() {
                                   {stage.analysis_type === 'transcript' ? '🎤 Transcrição' : '📄 Currículo'}
                                 </span>
                               </div>
-                              {stage.description && <p className="text-xs text-gray-600 whitespace-pre-line">{stage.description}</p>}
+                              <p className="text-xs text-gray-600">
+                                Template:{' '}
+                                {stage.prompt_template_id
+                                  ? promptTemplates.find((template) => template.id === stage.prompt_template_id)?.name || 'Selecionado'
+                                  : defaultPromptTemplate?.name
+                                    ? `Padrão (${defaultPromptTemplate.name})`
+                                    : 'Padrão'}
+                              </p>
                               <div className="flex items-center gap-2 text-xs text-gray-500">
                                 <span>Nota mínima: {stage.threshold}</span>
                                 <span>•</span>

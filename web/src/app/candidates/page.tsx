@@ -1,7 +1,7 @@
 'use client'
 
 import { Suspense, useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useToast } from '@/components/ToastProvider'
 import CandidateDetailModal from '@/components/CandidateDetailModal'
 
@@ -117,6 +117,8 @@ function CandidatesPageContent() {
   const [assigningJob, setAssigningJob] = useState(false)
   const [selectedJobForAssign, setSelectedJobForAssign] = useState<string>('')
   const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
 
   async function load() {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
@@ -156,6 +158,21 @@ function CandidatesPageContent() {
     setSelected(candidate ?? { id: candidateId, name: 'Candidato' })
     setIsDetailModalOpen(true)
   }, [searchParams, candidates, isDetailModalOpen, selected?.id])
+
+  function closeDetailFromUrl() {
+    setIsDetailModalOpen(false)
+    setSelected(null)
+    const returnTo = searchParams.get('returnTo')
+    if (returnTo) {
+      router.replace(returnTo)
+      return
+    }
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('candidateId')
+    params.delete('returnTo')
+    const query = params.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname)
+  }
 
   async function uploadResume(
     file: File,
@@ -886,10 +903,7 @@ function CandidatesPageContent() {
       {isDetailModalOpen && selected && (
         <CandidateDetailModal
           candidateId={selected.id}
-          onClose={() => {
-            setIsDetailModalOpen(false)
-            setSelected(null)
-          }}
+          onClose={closeDetailFromUrl}
           onUpdate={() => {
             load()
           }}

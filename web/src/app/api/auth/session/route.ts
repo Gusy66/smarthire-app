@@ -1,8 +1,6 @@
-import { NextRequest } from 'next/server'
-import { cookies } from 'next/headers'
+import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
-  const cookieStore = await cookies()
   let payload: any = {}
   try {
     // Tentar parsear o body, se estiver vazio ou inválido, usar objeto vazio
@@ -18,12 +16,14 @@ export async function POST(req: NextRequest) {
     const { event, session } = payload || {}
 
     const shouldSetToken = ['SIGNED_IN', 'INITIAL_SESSION', 'TOKEN_REFRESHED', 'REFRESH_TOKEN_UPDATED', 'RECOVERED', 'PASSWORD_RECOVERY'].includes(event)
+    let response = NextResponse.json({ ok: true })
+
     if (shouldSetToken) {
       const accessToken = session?.access_token
       if (!accessToken) {
-        return Response.json({ error: { code: 'invalid_session', message: 'Sessão inválida' } }, { status: 400 })
+        return NextResponse.json({ error: { code: 'invalid_session', message: 'Sessão inválida' } }, { status: 400 })
       }
-      cookieStore.set('sb-access-token', accessToken, {
+      response.cookies.set('sb-access-token', accessToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
@@ -33,11 +33,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (event === 'SIGNED_OUT') {
-      cookieStore.delete('sb-access-token')
+      response.cookies.delete('sb-access-token')
     }
 
     // Propaga a expiração para o navegador: evita loading infinito em alguns ambientes
-    const response = Response.json({ ok: true })
     if (payload?.session?.expires_at) {
       response.headers.set('X-Session-Expires-At', String(payload.session.expires_at))
     }
@@ -46,9 +45,11 @@ export async function POST(req: NextRequest) {
     console.error('Erro ao sincronizar sessão', error, 'payload:', payload)
     // Mesmo com erro, tentar deletar o cookie para garantir logout
     try {
-      cookieStore.delete('sb-access-token')
+      const response = NextResponse.json({ ok: true })
+      response.cookies.delete('sb-access-token')
+      return response
     } catch {}
-    return Response.json({ ok: true })
+    return NextResponse.json({ ok: true })
   }
 }
 

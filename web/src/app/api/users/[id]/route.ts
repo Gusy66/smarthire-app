@@ -159,6 +159,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
       if (permError) {
         console.error('[User API] Erro ao atualizar permissões:', permError)
+        return NextResponse.json(
+          { error: { code: 'db_error', message: 'Erro ao atualizar permissões' } },
+          { status: 500 }
+        )
       }
     }
 

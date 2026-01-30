@@ -11,7 +11,13 @@ export type BoardLaneItem = {
   run_status?: string | null
 }
 
-export type BoardResponse = { stages: Stage[]; lanes: Record<string, BoardLaneItem[]> }
+export type BoardResponse = {
+  stages: Stage[]
+  lanes: Record<string, BoardLaneItem[]>
+  evaluation_counts_by_stage_id?: Record<string, number>
+  latest_scores_by_application_id?: Record<string, number>
+  stage_scores_by_stage_id?: Record<string, number[]>
+}
 
 export type LatestAnalysis = {
   run_id?: string

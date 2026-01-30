@@ -38,6 +38,28 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   if (!apps || apps.length === 0) return Response.json({ items: [] })
 
+  const applicationIds = apps.map((a) => a.id)
+  const approvedAtByApplicationId = new Map<string, string>()
+  if (applicationIds.length > 0) {
+    const { data: approvals, error: approvalsError } = await supabase
+      .from('application_stages')
+      .select('application_id, decided_at')
+      .in('application_id', applicationIds)
+      .eq('status', 'succeeded')
+      .not('decided_at', 'is', null)
+    if (approvalsError) {
+      return Response.json({ error: { code: 'db_error', message: approvalsError.message } }, { status: 500 })
+    }
+    approvals?.forEach((entry) => {
+      const decidedAt = entry.decided_at
+      if (!decidedAt) return
+      const current = approvedAtByApplicationId.get(entry.application_id)
+      if (!current || new Date(decidedAt).getTime() > new Date(current).getTime()) {
+        approvedAtByApplicationId.set(entry.application_id, decidedAt)
+      }
+    })
+  }
+
   const candidateIds = [...new Set(apps.map((a) => a.candidate_id))]
   const { data: candidates, error: candErr } = await supabase
     .from('candidates')
@@ -50,7 +72,11 @@ export async function GET(_: NextRequest, { params }: Params) {
       .filter((c) => c.company_id === user.company_id)
       .map((c) => [c.id, c])
   )
-  const items = apps.map((a) => ({ ...a, candidate: candidateById.get(a.candidate_id) || null }))
+  const items = apps.map((a) => ({
+    ...a,
+    approved_at: approvedAtByApplicationId.get(a.id) ?? null,
+    candidate: candidateById.get(a.candidate_id) || null,
+  }))
   return Response.json({ items })
 }
 

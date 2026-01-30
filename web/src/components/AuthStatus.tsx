@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser'
 
@@ -12,14 +12,48 @@ export default function AuthStatus({ variant = 'default' }: AuthStatusProps) {
   const supabase = getSupabaseBrowser()
   const router = useRouter()
   const [email, setEmail] = useState<string | null>(null)
+  const [checking, setChecking] = useState(true)
   const [loggingOut, setLoggingOut] = useState(false)
   const isMobile = variant === 'mobile'
+  const initialLoadDone = useRef(false)
+
+  const loadAuthStatus = async () => {
+    try {
+      const authPromise = supabase.auth.getUser()
+      const timeoutPromise = new Promise<{ data: { user?: { email?: string | null } } }>((resolve) =>
+        setTimeout(() => resolve({ data: { user: { email: null } } }), 3000)
+      )
+      const { data } = await Promise.race([authPromise, timeoutPromise])
+      if (data.user?.email) {
+        setEmail(data.user.email)
+        return
+      }
+      const res = await fetch('/api/auth/me', { credentials: 'same-origin' })
+      if (res.ok) {
+        const json = await res.json().catch(() => null)
+        setEmail(json?.email ?? null)
+        return
+      }
+      setEmail(null)
+    } catch {
+      setEmail(null)
+    }
+  }
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null))
+    let active = true
+    if (!initialLoadDone.current) {
+      setChecking(true)
+      loadAuthStatus().finally(() => {
+        if (active) {
+          setChecking(false)
+          initialLoadDone.current = true
+        }
+      })
+    }
     const { data: sub } = supabase.auth.onAuthStateChange(async () => {
-      const { data } = await supabase.auth.getUser()
-      setEmail(data.user?.email ?? null)
+      if (!active) return
+      await loadAuthStatus()
     })
     return () => { sub.subscription.unsubscribe() }
   }, [supabase])
@@ -66,12 +100,14 @@ export default function AuthStatus({ variant = 'default' }: AuthStatusProps) {
     ? 'btn btn-outline text-sm w-full justify-center'
     : 'btn btn-outline text-sm'
 
+  if (checking) return <span className="text-sm text-gray-500">Verificando...</span>
   if (!email) return <a href="/login" className={linkClasses}>Entrar</a>
   return (
     <div className={isMobile ? 'flex w-full flex-col gap-3 text-sm' : 'flex items-center gap-2 text-sm'}>
       <span className={isMobile ? 'text-sm text-gray-700 break-words' : 'max-w-[200px] truncate text-gray-700'} title={email}>
         {email}
       </span>
+      <span className="text-xs text-emerald-600">Logado</span>
       <button
         onClick={handleLogout}
         disabled={loggingOut}

@@ -171,18 +171,27 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Criar permissões se fornecidas
-    if (permissions && typeof permissions === 'object') {
-      await admin
-        .from('user_permissions')
-        .upsert({
-          user_id: newUser.id,
-          criar_prompts: permissions.criar_prompts ?? false,
-          cadastrar_candidatos: permissions.cadastrar_candidatos ?? false,
-          criar_editar_vagas: permissions.criar_editar_vagas ?? false
-        }, {
-          onConflict: 'user_id'
-        })
+    // Criar permissões (sempre criar registro para consistência)
+    const perms = (permissions && typeof permissions === 'object') ? permissions : {}
+    const { error: permError } = await admin
+      .from('user_permissions')
+      .upsert({
+        user_id: newUser.id,
+        criar_prompts: perms.criar_prompts ?? false,
+        cadastrar_candidatos: perms.cadastrar_candidatos ?? false,
+        criar_editar_vagas: perms.criar_editar_vagas ?? false
+      }, {
+        onConflict: 'user_id'
+      })
+    if (permError) {
+      console.error('[Users API] Erro ao salvar permissões:', permError)
+      // Rollback: remover usuário criado
+      await admin.from('users').delete().eq('id', newUser.id)
+      await admin.auth.admin.deleteUser(authData.user.id)
+      return NextResponse.json(
+        { error: { code: 'db_error', message: `Erro ao salvar permissões: ${permError.message}` } },
+        { status: 500 }
+      )
     }
 
     // Buscar permissões atualizadas

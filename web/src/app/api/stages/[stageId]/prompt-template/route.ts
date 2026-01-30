@@ -77,7 +77,10 @@ export async function POST(
 
     const { error } = await supabase
       .from('stage_prompt_templates')
-      .upsert({ stage_id: stageId, prompt_template_id })
+      .upsert(
+        { stage_id: stageId, prompt_template_id },
+        { onConflict: 'stage_id' }
+      )
 
     if (error) {
       return Response.json({ error: { code: 'db_error', message: error.message } }, { status: 500 })
