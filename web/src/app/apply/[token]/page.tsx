@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useParams } from 'next/navigation'
 
 type PublicJob = {
   id: string
@@ -18,11 +19,17 @@ declare global {
   interface Window {
     onTurnstileSuccess?: (token: string) => void
     onTurnstileExpired?: () => void
+    onTurnstileError?: () => void
+    turnstile?: {
+      render: (container: HTMLElement, options: Record<string, any>) => string
+      remove: (widgetId: string) => void
+    }
   }
 }
 
-export default function PublicApplyPage({ params }: { params: { token: string } }) {
-  const { token } = params
+export default function PublicApplyPage() {
+  const params = useParams()
+  const token = typeof params?.token === 'string' ? params.token : ''
   const [job, setJob] = useState<PublicJob | null>(null)
   const [loadingJob, setLoadingJob] = useState(true)
   const [error, setError] = useState('')
@@ -31,6 +38,8 @@ export default function PublicApplyPage({ params }: { params: { token: string } 
   const [resumePath, setResumePath] = useState<string | null>(null)
   const [resumeBucket, setResumeBucket] = useState<string | null>(null)
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const captchaContainerRef = useRef<HTMLDivElement | null>(null)
+  const turnstileWidgetId = useRef<string | null>(null)
 
   const [form, setForm] = useState({
     name: '',
@@ -69,13 +78,43 @@ export default function PublicApplyPage({ params }: { params: { token: string } 
     if (!siteKey) return
     window.onTurnstileSuccess = (tokenValue: string) => setCaptchaToken(tokenValue)
     window.onTurnstileExpired = () => setCaptchaToken(null)
-    if (!document.getElementById('turnstile-script')) {
+    window.onTurnstileError = () => setCaptchaToken(null)
+
+    const renderWidget = () => {
+      if (!captchaContainerRef.current || !window.turnstile) return
+      if (turnstileWidgetId.current) {
+        window.turnstile.remove(turnstileWidgetId.current)
+      }
+      turnstileWidgetId.current = window.turnstile.render(captchaContainerRef.current, {
+        sitekey: siteKey,
+        callback: 'onTurnstileSuccess',
+        'expired-callback': 'onTurnstileExpired',
+        'error-callback': 'onTurnstileError',
+      })
+    }
+
+    const existingScript = document.getElementById('turnstile-script') as HTMLScriptElement | null
+    if (!existingScript) {
       const script = document.createElement('script')
       script.id = 'turnstile-script'
-      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
       script.async = true
       script.defer = true
+      script.onload = () => renderWidget()
       document.body.appendChild(script)
+    } else {
+      if (window.turnstile) {
+        renderWidget()
+      } else {
+        existingScript.addEventListener('load', renderWidget, { once: true })
+      }
+    }
+
+    return () => {
+      if (turnstileWidgetId.current && window.turnstile) {
+        window.turnstile.remove(turnstileWidgetId.current)
+        turnstileWidgetId.current = null
+      }
     }
   }, [siteKey])
 
@@ -236,7 +275,7 @@ export default function PublicApplyPage({ params }: { params: { token: string } 
 
             {siteKey ? (
               <div className="pt-2">
-                <div className="cf-turnstile" data-sitekey={siteKey} data-callback="onTurnstileSuccess" data-expired-callback="onTurnstileExpired" />
+                <div ref={captchaContainerRef} />
               </div>
             ) : (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
