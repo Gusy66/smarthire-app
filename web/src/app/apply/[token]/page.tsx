@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import Script from 'next/script'
 
 type PublicJob = {
   id: string
@@ -17,9 +18,6 @@ type PublicJob = {
 
 declare global {
   interface Window {
-    onTurnstileSuccess?: (token: string) => void
-    onTurnstileExpired?: () => void
-    onTurnstileError?: () => void
     turnstile?: {
       render: (container: HTMLElement, options: Record<string, any>) => string
       remove: (widgetId: string) => void
@@ -30,6 +28,7 @@ declare global {
 export default function PublicApplyPage() {
   const params = useParams()
   const token = typeof params?.token === 'string' ? params.token : ''
+  const router = useRouter()
   const [job, setJob] = useState<PublicJob | null>(null)
   const [loadingJob, setLoadingJob] = useState(true)
   const [error, setError] = useState('')
@@ -74,49 +73,41 @@ export default function PublicApplyPage() {
     }
   }, [token])
 
+  const renderTurnstile = useCallback(() => {
+    if (!siteKey || !captchaContainerRef.current || !window.turnstile) return
+    if (turnstileWidgetId.current) {
+      window.turnstile.remove(turnstileWidgetId.current)
+    }
+    turnstileWidgetId.current = window.turnstile.render(captchaContainerRef.current, {
+      sitekey: siteKey,
+      callback: (tokenValue: string) => setCaptchaToken(tokenValue),
+      'expired-callback': () => setCaptchaToken(null),
+      'error-callback': () => setCaptchaToken(null),
+    })
+  }, [siteKey])
+
   useEffect(() => {
     if (!siteKey) return
-    window.onTurnstileSuccess = (tokenValue: string) => setCaptchaToken(tokenValue)
-    window.onTurnstileExpired = () => setCaptchaToken(null)
-    window.onTurnstileError = () => setCaptchaToken(null)
-
-    const renderWidget = () => {
-      if (!captchaContainerRef.current || !window.turnstile) return
-      if (turnstileWidgetId.current) {
-        window.turnstile.remove(turnstileWidgetId.current)
+    let attempts = 0
+    const interval = window.setInterval(() => {
+      attempts += 1
+      if (window.turnstile && captchaContainerRef.current) {
+        renderTurnstile()
+        window.clearInterval(interval)
       }
-      turnstileWidgetId.current = window.turnstile.render(captchaContainerRef.current, {
-        sitekey: siteKey,
-        callback: 'onTurnstileSuccess',
-        'expired-callback': 'onTurnstileExpired',
-        'error-callback': 'onTurnstileError',
-      })
-    }
-
-    const existingScript = document.getElementById('turnstile-script') as HTMLScriptElement | null
-    if (!existingScript) {
-      const script = document.createElement('script')
-      script.id = 'turnstile-script'
-      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
-      script.async = true
-      script.defer = true
-      script.onload = () => renderWidget()
-      document.body.appendChild(script)
-    } else {
-      if (window.turnstile) {
-        renderWidget()
-      } else {
-        existingScript.addEventListener('load', renderWidget, { once: true })
+      if (attempts >= 10) {
+        window.clearInterval(interval)
       }
-    }
+    }, 300)
 
     return () => {
+      window.clearInterval(interval)
       if (turnstileWidgetId.current && window.turnstile) {
         window.turnstile.remove(turnstileWidgetId.current)
         turnstileWidgetId.current = null
       }
     }
-  }, [siteKey])
+  }, [siteKey, renderTurnstile])
 
   async function handleResumeUpload(file: File) {
     if (!file) return
@@ -187,12 +178,7 @@ export default function PublicApplyPage() {
       if (!res.ok) {
         throw new Error(json?.error?.message || 'Erro ao enviar candidatura')
       }
-      setForm({ name: '', email: '', phone: '' })
-      setResumePath(null)
-      setResumeBucket(null)
-      setCaptchaToken(null)
-      setError('') 
-      alert('Candidatura enviada com sucesso!')
+      router.push('/apply/success')
     } catch (err: any) {
       setError(err?.message || 'Erro ao enviar candidatura')
     } finally {
@@ -275,6 +261,12 @@ export default function PublicApplyPage() {
 
             {siteKey ? (
               <div className="pt-2">
+                <Script
+                  id="turnstile-script"
+                  src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+                  strategy="afterInteractive"
+                  onLoad={renderTurnstile}
+                />
                 <div ref={captchaContainerRef} />
               </div>
             ) : (
