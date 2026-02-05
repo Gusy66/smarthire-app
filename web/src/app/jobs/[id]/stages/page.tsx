@@ -165,6 +165,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     job_description?: string | null
     responsibilities?: string | null
     requirements_and_skills?: string | null
+    public_token?: string | null
   } | null>(null)
   const [showEditJobModal, setShowEditJobModal] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -192,6 +193,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     stages: { id: string; stage_weight: number }[]
     items: { stages: { stage_id: string; score: number }[] }[]
   } | null>(null)
+  const [publicLink, setPublicLink] = useState<string | null>(null)
   const [selectedForBulk, setSelectedForBulk] = useState<Record<string, boolean>>({})
   const [currentItem, setCurrentItem] = useState<{ application_id: string; application_stage_id: string; candidate: { id: string; name?: string } } | null>(null)
   const [stageForm, setStageForm] = useState({ name: '', description: '', threshold: 0, stage_weight: 1 })
@@ -488,7 +490,7 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
   }, [board, refreshBoard])
 
   const loadJobInfo = useCallback(async (id: string) => {
-    const job = await api<{ item?: { id: string; title: string; created_at?: string | null; status?: string | null; department?: string | null; location?: string | null; salary?: string | null; job_description?: string | null; responsibilities?: string | null; requirements_and_skills?: string | null } }>(
+    const job = await api<{ item?: { id: string; title: string; created_at?: string | null; status?: string | null; department?: string | null; location?: string | null; salary?: string | null; job_description?: string | null; responsibilities?: string | null; requirements_and_skills?: string | null; public_token?: string | null } }>(
       `/api/jobs/${id}`
     )
     if (!job?.item) {
@@ -498,6 +500,16 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
     setJobInfo(job.item)
     return job.item
   }, [notify])
+
+  useEffect(() => {
+    if (!jobInfo?.public_token) {
+      setPublicLink(null)
+      return
+    }
+    if (typeof window === 'undefined') return
+    const base = window.location.origin
+    setPublicLink(`${base}/apply/${jobInfo.public_token}`)
+  }, [jobInfo?.public_token])
 
 
   useEffect(() => {
@@ -1331,6 +1343,34 @@ export default function JobStagesPage({ params }: { params: Promise<{ id: string
                     className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 opacity-60 cursor-not-allowed"
                   >
                     Filtros
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-4 md:p-5">
+                <div className="text-sm font-medium text-gray-900">Link público da vaga</div>
+                <p className="text-xs text-gray-500">Compartilhe este link com candidatos para inscrição direta.</p>
+                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <input
+                    value={publicLink || 'Link indisponível'}
+                    readOnly
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!publicLink || !navigator?.clipboard) return
+                      try {
+                        await navigator.clipboard.writeText(publicLink)
+                        notify({ title: 'Link copiado', variant: 'success' })
+                      } catch {
+                        notify({ title: 'Falha ao copiar link', variant: 'error' })
+                      }
+                    }}
+                    disabled={!publicLink}
+                    className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    Copiar link
                   </button>
                 </div>
               </div>

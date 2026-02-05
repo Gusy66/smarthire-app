@@ -52,7 +52,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const { data: job, error } = await supabase
     .from('jobs')
     .select(
-      `id, title, description, location, salary, work_model, contract_type, requirements, skills, benefits, department, job_description, responsibilities, requirements_and_skills, work_schedule, travel_availability, observations, status, created_at, created_by, company_id`
+      `id, title, description, location, salary, work_model, contract_type, requirements, skills, benefits, department, job_description, responsibilities, requirements_and_skills, work_schedule, travel_availability, observations, status, created_at, created_by, company_id, public_token`
     )
     .eq('id', jobId)
     .maybeSingle()
